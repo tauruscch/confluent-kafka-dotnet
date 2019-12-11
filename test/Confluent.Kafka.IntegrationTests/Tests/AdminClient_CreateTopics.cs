@@ -18,8 +18,6 @@
 
 using System;
 using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 using System.Collections.Generic;
 using Confluent.Kafka.Admin;
 using Xunit;
@@ -27,13 +25,13 @@ using Xunit;
 
 namespace Confluent.Kafka.IntegrationTests
 {
-    public static partial class Tests
+    public partial class Tests
     {
         /// <summary>
         ///     Test functionality of AdminClient.CreateTopics.
         /// </summary>
         [Theory, MemberData(nameof(KafkaParameters))]
-        public static void AdminClient_CreateTopics(string bootstrapServers, string singlePartitionTopic, string partitionedTopic)
+        public void AdminClient_CreateTopics(string bootstrapServers)
         {
             LogToFile("start AdminClient_CreateTopics");
 
@@ -46,7 +44,7 @@ namespace Confluent.Kafka.IntegrationTests
             // test 
             //  - construction of admin client from configuration.
             //  - creation of more than one topic.
-            using (var adminClient = new AdminClient(new AdminClientConfig { BootstrapServers = bootstrapServers }))
+            using (var adminClient = new AdminClientBuilder(new AdminClientConfig { BootstrapServers = bootstrapServers }).Build())
             {
                 adminClient.CreateTopicsAsync(
                     new TopicSpecification[]
@@ -61,15 +59,15 @@ namespace Confluent.Kafka.IntegrationTests
             //  - construction of admin client from a producer handle
             //  - creation of topic 
             //  - producing to created topics works.
-            using (var producer = new Producer<Null, Null>(new ProducerConfig { BootstrapServers = bootstrapServers }))
-            using (var adminClient2 = new AdminClient(producer.Handle))
+            using (var producer = new ProducerBuilder<Null, Null>(new ProducerConfig { BootstrapServers = bootstrapServers }).Build())
+            using (var adminClient2 = new DependentAdminClientBuilder(producer.Handle).Build())
             {
                 adminClient2.CreateTopicsAsync(
                     new List<TopicSpecification> { new TopicSpecification { Name = topicName3, NumPartitions = 24, ReplicationFactor = 1 } }).Wait();
 
-                var deliveryReport1 = producer.ProduceAsync(topicName1, new Message<Null, Null> {}).Result;
-                var deliveryReport2 = producer.ProduceAsync(topicName2, new Message<Null, Null> {}).Result;
-                var deliveryReport3 = producer.ProduceAsync(topicName3, new Message<Null, Null> {}).Result;
+                var deliveryReport1 = producer.ProduceAsync(topicName1, new Message<Null, Null>()).Result;
+                var deliveryReport2 = producer.ProduceAsync(topicName2, new Message<Null, Null>()).Result;
+                var deliveryReport3 = producer.ProduceAsync(topicName3, new Message<Null, Null>()).Result;
                 
                 Assert.Equal(topicName1, deliveryReport1.Topic);
                 Assert.Equal(topicName2, deliveryReport2.Topic);
@@ -79,7 +77,7 @@ namespace Confluent.Kafka.IntegrationTests
             // test
             //  - create topic with same name as existing topic
             //  - as well as another topic that does exist (and for which create should succeed).
-            using (var adminClient = new AdminClient(new AdminClientConfig { BootstrapServers = bootstrapServers }))
+            using (var adminClient = new AdminClientBuilder(new AdminClientConfig { BootstrapServers = bootstrapServers }).Build())
             {
                 try
                 {
@@ -108,7 +106,7 @@ namespace Confluent.Kafka.IntegrationTests
 
             // test 
             //  - validate only
-            using (var adminClient = new AdminClient(new AdminClientConfig { BootstrapServers = bootstrapServers }))
+            using (var adminClient = new AdminClientBuilder(new AdminClientConfig { BootstrapServers = bootstrapServers }).Build())
             {
                 adminClient.CreateTopicsAsync(
                     new List<TopicSpecification> { new TopicSpecification { Name = topicName5, NumPartitions = 1, ReplicationFactor = 1 } }, 

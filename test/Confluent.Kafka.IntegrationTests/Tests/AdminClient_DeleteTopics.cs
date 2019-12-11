@@ -18,9 +18,7 @@
 
 using System;
 using System.Linq;
-using System.Text;
 using System.Threading;
-using System.Threading.Tasks;
 using System.Collections.Generic;
 using Confluent.Kafka.Admin;
 using Xunit;
@@ -28,13 +26,13 @@ using Xunit;
 
 namespace Confluent.Kafka.IntegrationTests
 {
-    public static partial class Tests
+    public partial class Tests
     {
         /// <summary>
         ///     Test functionality of AdminClient.CreateTopics.
         /// </summary>
         [Theory, MemberData(nameof(KafkaParameters))]
-        public static void AdminClient_DeleteTopics(string bootstrapServers, string singlePartitionTopic, string partitionedTopic)
+        public void AdminClient_DeleteTopics(string bootstrapServers)
         {
             LogToFile("start AdminClient_DeleteTopics");
 
@@ -43,7 +41,7 @@ namespace Confluent.Kafka.IntegrationTests
             var topicName3 = Guid.NewGuid().ToString();
             
             // test single delete topic.
-            using (var adminClient = new AdminClient(new AdminClientConfig { BootstrapServers = bootstrapServers }))
+            using (var adminClient = new AdminClientBuilder(new AdminClientConfig { BootstrapServers = bootstrapServers }).Build())
             {
                 adminClient.CreateTopicsAsync(
                     new List<TopicSpecification> { new TopicSpecification { Name = topicName1, NumPartitions = 1, ReplicationFactor = 1 } }).Wait();
@@ -56,7 +54,7 @@ namespace Confluent.Kafka.IntegrationTests
             // test
             //  - delete two topics, one that doesn't exist.
             //  - check that explicitly giving options doesn't obviously not work.
-            using (var adminClient = new AdminClient(new AdminClientConfig { BootstrapServers = bootstrapServers }))
+            using (var adminClient = new AdminClientBuilder(new AdminClientConfig { BootstrapServers = bootstrapServers }).Build())
             {
                 adminClient.CreateTopicsAsync(
                     new List<TopicSpecification> { new TopicSpecification { Name = topicName2, NumPartitions = 1, ReplicationFactor = 1 } }).Wait();

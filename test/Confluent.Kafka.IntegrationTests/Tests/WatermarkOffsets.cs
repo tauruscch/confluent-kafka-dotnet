@@ -17,21 +17,20 @@
 #pragma warning disable xUnit1026
 
 using System;
-using System.Text;
 using System.Collections.Generic;
 using Xunit;
 
 
 namespace Confluent.Kafka.IntegrationTests
 {
-    public static partial class Tests
+    public partial class Tests
     {
 
         /// <summary>
-        ///     Tests for GetWatermarkOffsets and QueryWatermarkOffsets on producer and consumer.
+        ///     Tests for GetWatermarkOffsets and QueryWatermarkOffsets.
         /// </summary>
         [Theory, MemberData(nameof(KafkaParameters))]
-        public static void WatermarkOffsets(string bootstrapServers, string singlePartitionTopic, string partitionedTopic)
+        public void WatermarkOffsets(string bootstrapServers)
         {
             LogToFile("start WatermarkOffsets");
 
@@ -39,23 +38,12 @@ namespace Confluent.Kafka.IntegrationTests
 
             var testString = "hello world";
 
-            DeliveryReport<Null, string> dr;
-            using (var producer = new Producer<Null, string>(producerConfig))
-            using (var adminClient = new AdminClient(producer.Handle))
+            DeliveryResult<Null, string> dr;
+            using (var producer = new ProducerBuilder<Null, string>(producerConfig).Build())
+            using (var adminClient = new DependentAdminClientBuilder(producer.Handle).Build())
             {
                 dr = producer.ProduceAsync(singlePartitionTopic, new Message<Null, string> { Value = testString }).Result;
                 Assert.Equal(0, producer.Flush(TimeSpan.FromSeconds(10))); // this isn't necessary.
-
-                var queryOffsets = adminClient.QueryWatermarkOffsets(new TopicPartition(singlePartitionTopic, 0), TimeSpan.FromSeconds(20));
-                Assert.NotEqual(queryOffsets.Low, Offset.Invalid);
-                Assert.NotEqual(queryOffsets.High, Offset.Invalid);
-
-                // TODO: can anything be said about the high watermark offset c.f. dr.Offset?
-                //       I have seen queryOffsets.High < dr.Offset and also queryOffsets.High = dr.Offset + 1.
-                //       The former only once (or was I in error?). request.required.acks has a default value
-                //       of 1, so with only one broker, I assume the former should never happen.
-                // Console.WriteLine($"Query Offsets: [{queryOffsets.Low} {queryOffsets.High}]. DR Offset: {dr.Offset}");
-                Assert.True(queryOffsets.Low < queryOffsets.High);
             }
 
             var consumerConfig = new ConsumerConfig
@@ -65,20 +53,19 @@ namespace Confluent.Kafka.IntegrationTests
                 SessionTimeoutMs = 6000
             };
 
-            using (var consumer = new Consumer<byte[], byte[]>(consumerConfig))
-            using (var adminClient = new AdminClient(consumer.Handle))
+            using (var consumer = new ConsumerBuilder<byte[], byte[]>(consumerConfig).Build())
             {
                 consumer.Assign(new List<TopicPartitionOffset>() { dr.TopicPartitionOffset });
                 var record = consumer.Consume(TimeSpan.FromSeconds(10));
                 Assert.NotNull(record.Message);
 
-                var getOffsets = adminClient.GetWatermarkOffsets(dr.TopicPartition);
-                Assert.Equal(getOffsets.Low, Offset.Invalid);
+                var getOffsets = consumer.GetWatermarkOffsets(dr.TopicPartition);
+                Assert.Equal(getOffsets.Low, Offset.Unset);
                 // the offset of the next message to be read.
                 Assert.Equal(getOffsets.High, dr.Offset + 1);
 
-                var queryOffsets = adminClient.QueryWatermarkOffsets(dr.TopicPartition, TimeSpan.FromSeconds(20));
-                Assert.NotEqual(queryOffsets.Low, Offset.Invalid);
+                var queryOffsets = consumer.QueryWatermarkOffsets(dr.TopicPartition, TimeSpan.FromSeconds(20));
+                Assert.NotEqual(queryOffsets.Low, Offset.Unset);
                 Assert.Equal(getOffsets.High, queryOffsets.High);
             }
 

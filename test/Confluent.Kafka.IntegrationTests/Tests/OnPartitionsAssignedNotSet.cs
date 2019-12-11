@@ -17,8 +17,6 @@
 #pragma warning disable xUnit1026
 
 using System;
-using System.Text;
-using System.Collections.Generic;
 using Xunit;
 
 
@@ -29,10 +27,10 @@ namespace Confluent.Kafka.IntegrationTests
     ///     handler has not been added to OnPartitionsAssigned
     ///     (deserializing Consumer)
     /// </summary>
-    public static partial class Tests
+    public partial class Tests
     {
         [Theory, MemberData(nameof(KafkaParameters))]
-        public static void OnPartitionsAssignedNotSet(string bootstrapServers, string singlePartitionTopic, string partitionedTopic)
+        public void OnPartitionsAssignedNotSet(string bootstrapServers)
         {
             LogToFile("start OnPartitionsAssignedNotSet");
 
@@ -46,14 +44,14 @@ namespace Confluent.Kafka.IntegrationTests
             var producerConfig = new ProducerConfig { BootstrapServers = bootstrapServers };
 
             // Producing onto the topic to make sure it exists.
-            using (var producer = new Producer<Null, string>(producerConfig))
+            using (var producer = new ProducerBuilder<byte[], byte[]>(producerConfig).Build())
             {
-                var dr = producer.ProduceAsync(singlePartitionTopic, new Message<Null, string> { Value = "test string" }).Result;
-                Assert.NotEqual(Offset.Invalid, dr.Offset);
+                var dr = producer.ProduceAsync(singlePartitionTopic, new Message<byte[], byte[]> { Value = Serializers.Utf8.Serialize("test string", SerializationContext.Empty) }).Result;
+                Assert.NotEqual(Offset.Unset, dr.Offset);
                 producer.Flush(TimeSpan.FromSeconds(10));
             }
 
-            using (var consumer = new Consumer<Null, string>(consumerConfig))
+            using (var consumer = new ConsumerBuilder<byte[], byte[]>(consumerConfig).Build())
             {
                 consumer.Subscribe(singlePartitionTopic);
                 Assert.Empty(consumer.Assignment);

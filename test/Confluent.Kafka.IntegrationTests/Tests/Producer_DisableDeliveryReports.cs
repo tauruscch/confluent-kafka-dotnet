@@ -17,7 +17,6 @@
 #pragma warning disable xUnit1026
 
 using System;
-using System.Collections.Generic;
 using Xunit;
 
 
@@ -27,10 +26,10 @@ namespace Confluent.Kafka.IntegrationTests
     ///     Test dotnet.producer.enable.delivery.reports == true
     ///     results in no delivery report.
     /// </summary>
-    public static partial class Tests
+    public partial class Tests
     {
         [Theory, MemberData(nameof(KafkaParameters))]
-        public static void Producer_DisableDeliveryReports(string bootstrapServers, string singlePartitionTopic, string partitionedTopic)
+        public void Producer_DisableDeliveryReports(string bootstrapServers)
         {
             LogToFile("start Producer_DisableDeliveryReports");
 
@@ -48,28 +47,47 @@ namespace Confluent.Kafka.IntegrationTests
             };
 
             // If delivery reports are disabled:
-            //   1. callback functions should never called, even if specified.
-            //   2. specifying no delivery report handlers is valid.
-            //   3. tasks should complete immediately.
-            int count = 0;
-            using (var producer = new Producer<byte[], byte[]>(producerConfig))
+            //   1. delivery handlers may not be specified.
+            //   2. tasks should complete immediately.
+            using (var producer = new ProducerBuilder<byte[], byte[]>(producerConfig).Build())
             {
-                producer.BeginProduce(singlePartitionTopic, new Message<byte[], byte[]> { Key = TestKey, Value = TestValue }, (DeliveryReportResult<byte[], byte[]> dr) => count += 1);
-                producer.BeginProduce(new TopicPartition(singlePartitionTopic, 0), new Message<byte[], byte[]> { Key = TestKey, Value = TestValue });
-                producer.BeginProduce(singlePartitionTopic, new Message<byte[], byte[]> { Key = TestKey, Value = TestValue });
-                producer.BeginProduce(new TopicPartition(singlePartitionTopic, 0), new Message<byte[], byte[]> { Key = TestKey, Value = TestValue });
+                Assert.Throws<InvalidOperationException>(() => producer.Produce(
+                    singlePartitionTopic,
+                    new Message<byte[], byte[]> { Key = TestKey, Value = TestValue },
+                    (DeliveryReport<byte[], byte[]> dr) => Console.WriteLine("should not print")));
 
-                var drTask = producer.ProduceAsync(singlePartitionTopic, new Message<byte[], byte[]> { Key = TestKey, Value = TestValue });
-                Assert.True(drTask.IsCompleted);
-                Assert.Equal(Offset.Invalid, drTask.Result.Offset);
+                Assert.Throws<InvalidOperationException>(() => producer.Produce(
+                    new TopicPartition(singlePartitionTopic, 0),
+                    new Message<byte[], byte[]> { Key = TestKey, Value = TestValue },
+                    (DeliveryReport<byte[], byte[]> dr) => Console.WriteLine("should not print")));
+
+                producer.Produce(
+                    new TopicPartition(singlePartitionTopic, 0),
+                    new Message<byte[], byte[]> { Key = TestKey, Value = TestValue });
+
+                producer.Produce(
+                    singlePartitionTopic,
+                    new Message<byte[], byte[]> { Key = TestKey, Value = TestValue });
+
+                producer.Produce(
+                    new TopicPartition(singlePartitionTopic, 0),
+                    new Message<byte[], byte[]> { Key = TestKey, Value = TestValue });
+
+                var drTask = producer.ProduceAsync(
+                    singlePartitionTopic,
+                    new Message<byte[], byte[]> { Key = TestKey, Value = TestValue });
+                Assert.True(drTask.IsCompleted); // should complete immediately.
+                Assert.Equal(Offset.Unset, drTask.Result.Offset);
                 Assert.Equal(Partition.Any, drTask.Result.Partition);
                 Assert.Equal(singlePartitionTopic, drTask.Result.Topic);
                 Assert.Equal(TestKey, drTask.Result.Message.Key);
                 Assert.Equal(TestValue, drTask.Result.Message.Value);
 
-                drTask = producer.ProduceAsync(new TopicPartition(singlePartitionTopic, 0), new Message<byte[], byte[]> { Key = TestKey, Value = TestValue });
-                Assert.True(drTask.IsCompleted);
-                Assert.Equal(Offset.Invalid, drTask.Result.Offset);
+                drTask = producer.ProduceAsync(
+                    new TopicPartition(singlePartitionTopic, 0),
+                    new Message<byte[], byte[]> { Key = TestKey, Value = TestValue });
+                Assert.True(drTask.IsCompleted); // should complete immediately.
+                Assert.Equal(Offset.Unset, drTask.Result.Offset);
                 Assert.Equal(0, (int)drTask.Result.Partition);
                 Assert.Equal(singlePartitionTopic, drTask.Result.Topic);
                 Assert.Equal(TestKey, drTask.Result.Message.Key);
@@ -77,8 +95,6 @@ namespace Confluent.Kafka.IntegrationTests
 
                 Assert.Equal(0, producer.Flush(TimeSpan.FromSeconds(10)));
             }
-
-            Assert.Equal(0, count);
 
             Assert.Equal(0, Library.HandleCount);
             LogToFile("end   Producer_DisableDeliveryReports");

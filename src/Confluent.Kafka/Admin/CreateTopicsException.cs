@@ -24,7 +24,7 @@ namespace Confluent.Kafka.Admin
     /// <summary>
     ///     Represents an error that occured during a create topics request.
     /// </summary>
-    public class CreateTopicsException : Exception
+    public class CreateTopicsException : KafkaException
     {
         /// <summary>
         ///     Initialize a new instance of CreateTopicsException.
@@ -34,12 +34,12 @@ namespace Confluent.Kafka.Admin
         ///     (whether or not they were in error). At least one of these
         ///     results will be in error.
         /// </param>
-        public CreateTopicsException(List<CreateTopicExceptionResult> results)
-            : base(
+        public CreateTopicsException(List<CreateTopicReport> results)
+            : base(new Error(ErrorCode.Local_Partial,
                 "An error occurred creating topics: [" +
                 String.Join(", ", results.Where(r => r.Error.IsError).Select(r => r.Topic)) +
                 "]: [" + String.Join(", ", results.Where(r => r.Error.IsError).Select(r => r.Error)) +
-                "].")
+                "]."))
         {
             this.Results = results;
         }
@@ -49,6 +49,6 @@ namespace Confluent.Kafka.Admin
         ///     (whether or not they were in error). At least one of these
         ///     results will be in error.
         /// </summary>
-        public List<CreateTopicExceptionResult> Results { get; }
+        public List<CreateTopicReport> Results { get; }
     }
 }

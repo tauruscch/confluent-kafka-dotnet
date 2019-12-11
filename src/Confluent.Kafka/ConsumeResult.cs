@@ -1,4 +1,4 @@
-// Copyright 2016-2017 Confluent Inc., 2015-2016 Andreas Heider
+// Copyright 2017-2018 Confluent Inc., 2015-2016 Andreas Heider
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -46,7 +46,7 @@ namespace Confluent.Kafka
             => new TopicPartition(Topic, Partition);
 
         /// <summary>
-        ///     The TopicPartitionOffset assoicated with the message.
+        ///     The TopicPartitionOffset associated with the message.
         /// </summary>
         public TopicPartitionOffset TopicPartitionOffset
         {
@@ -63,7 +63,8 @@ namespace Confluent.Kafka
         }
 
         /// <summary>
-        ///     The Kafka message.
+        ///     The Kafka message, or null if this ConsumeResult
+        ///     instance represents an end of partition event.
         /// </summary>
         public Message<TKey, TValue> Message { get; set; }
 
@@ -72,8 +73,15 @@ namespace Confluent.Kafka
         /// </summary>
         public TKey Key
         {
-            get { return Message.Key; }
-            set { Message.Key = value; }
+            get
+            {
+                if (Message == null)
+                {
+                    throw new MessageNullException();
+                }
+
+                return Message.Key;
+            }
         }
 
         /// <summary>
@@ -81,8 +89,15 @@ namespace Confluent.Kafka
         /// </summary>
         public TValue Value
         {
-            get { return Message.Value; }
-            set { Message.Value = value; }
+            get
+            {
+                if (Message == null)
+                {
+                    throw new MessageNullException();
+                }
+                
+                return Message.Value;
+            }
         }
 
         /// <summary>
@@ -90,8 +105,15 @@ namespace Confluent.Kafka
         /// </summary>
         public Timestamp Timestamp
         {
-            get { return Message.Timestamp; }
-            set { Message.Timestamp = value; }
+            get
+            {
+                if (Message == null)
+                {
+                    throw new MessageNullException();
+                }
+
+                return Message.Timestamp;
+            }
         }
 
         /// <summary>
@@ -99,8 +121,21 @@ namespace Confluent.Kafka
         /// </summary>
         public Headers Headers
         {
-            get { return Message.Headers; }
-            set { Message.Headers = value; }
+            get
+            {
+                if (Message == null)
+                {
+                    throw new MessageNullException();
+                }
+                
+                return Message.Headers;
+            }
         }
+
+        /// <summary>
+        ///     True if this instance represents an end of partition
+        ///     event, false if it represents a message in kafka.
+        /// </summary>
+        public bool IsPartitionEOF { get; set; }
     }
 }

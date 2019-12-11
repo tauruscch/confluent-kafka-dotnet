@@ -14,10 +14,8 @@
 //
 // Refer to LICENSE for more information.
 
-using System;
-using System.Collections.Generic;
-using System.Text;
 using Confluent.Kafka;
+using System;
 
 
 namespace ConfluentCloudExample
@@ -43,25 +41,17 @@ namespace ConfluentCloudExample
             var pConfig = new ProducerConfig
             {
                 BootstrapServers = "<ccloud bootstrap servers>",
-                BrokerVersionFallback = "0.10.0.0",
-                ApiVersionFallbackMs = 0,
-                SaslMechanism = SaslMechanismType.Plain,
-                SecurityProtocol = SecurityProtocolType.Sasl_Ssl,
-                // On Windows, default trusted root CA certificates are stored in the Windows Registry.
-                // They are not automatically discovered by Confluent.Kafka and it's not possible to
-                // reference them using the `ssl.ca.location` property. You will need to obtain these
-                // from somewhere else, for example use the cacert.pem file distributed with curl:
-                // https://curl.haxx.se/ca/cacert.pem and reference that file in the `ssl.ca.location`
-                // property:
-                SslCaLocation = "/usr/local/etc/openssl/cert.pem", // suitable configuration for linux, osx.
-                // SslCaLocation = "c:\\path\\to\\cacert.pem", // windows
+                SaslMechanism = SaslMechanism.Plain,
+                SecurityProtocol = SecurityProtocol.SaslSsl,
+                // Note: If your root CA certificates are in an unusual location you
+                // may need to specify this using the SslCaLocation property.
                 SaslUsername = "<ccloud key>",
                 SaslPassword = "<ccloud secret>"
             };
 
-            using (var producer = new Producer<Null, string>(pConfig))
+            using (var producer = new ProducerBuilder<Null, string>(pConfig).Build())
             {
-                producer.ProduceAsync("dotnet-test-topic", new Message<Null, string> { Key = null, Value = "test value" })
+                producer.ProduceAsync("dotnet-test-topic", new Message<Null, string> { Value = "test value" })
                     .ContinueWith(task => task.IsFaulted
                         ? $"error producing message: {task.Exception.Message}"
                         : $"produced to: {task.Result.TopicPartitionOffset}");
@@ -74,20 +64,16 @@ namespace ConfluentCloudExample
             var cConfig = new ConsumerConfig
             {
                 BootstrapServers = "<confluent cloud bootstrap servers>",
-                BrokerVersionFallback = "0.10.0.0",
-                ApiVersionFallbackMs = 0,
-                SaslMechanism = SaslMechanismType.Plain,
-                SecurityProtocol = SecurityProtocolType.Sasl_Ssl,
-                SslCaLocation = "/usr/local/etc/openssl/cert.pem", // suitable configuration for linux, osx.
-                // SslCaLocation = "c:\\path\\to\\cacert.pem",     // windows
+                SaslMechanism = SaslMechanism.Plain,
+                SecurityProtocol = SecurityProtocol.SaslSsl,
                 SaslUsername = "<confluent cloud key>",
                 SaslPassword = "<confluent cloud secret>",
                 GroupId = Guid.NewGuid().ToString(),
-                AutoOffsetReset = AutoOffsetResetType.Earliest
+                AutoOffsetReset = AutoOffsetReset.Earliest
             };
 
-            using (var consumer = new Consumer<Null, string>(cConfig))
-            { 
+            using (var consumer = new ConsumerBuilder<Null, string>(cConfig).Build())
+            {
                 consumer.Subscribe("dotnet-test-topic");
 
                 try
@@ -102,7 +88,6 @@ namespace ConfluentCloudExample
 
                 consumer.Close();
             }
-
         }
     }
 }

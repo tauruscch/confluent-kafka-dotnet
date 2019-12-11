@@ -19,73 +19,67 @@
 using System;
 using System.Linq;
 using System.Text;
-using System.Collections.Generic;
 using Xunit;
 
 
 namespace Confluent.Kafka.IntegrationTests
 {
-    public static partial class Tests
+    public partial class Tests
     {
         /// <summary>
         ///     Test exceptions thrown during deserialization of keys
         ///     and values are surfaced via the OnConsumeError event.
         /// </summary>
         [Theory, MemberData(nameof(KafkaParameters))]
-        public static void Consumer_Poll_Error(string bootstrapServers, string singlePartitionTopic, string partitionedTopic)
+        public void Consumer_Poll_Error(string bootstrapServers)
         {
             LogToFile("start Consumer_Poll_Error");
 
             var producerConfig = new ProducerConfig { BootstrapServers = bootstrapServers };
 
             TopicPartitionOffset firstProduced = null;
-            using (var producer = new Producer<byte[], byte[]>(producerConfig))
+            using (var producer = new ProducerBuilder<byte[], byte[]>(producerConfig).Build())
             {
                 var keyData = Encoding.UTF8.GetBytes("key");
                 firstProduced = producer.ProduceAsync(singlePartitionTopic, new Message<byte[], byte[]> { Key = keyData }).Result.TopicPartitionOffset;
                 var valData = Encoding.UTF8.GetBytes("val");
                 producer.ProduceAsync(singlePartitionTopic, new Message<byte[], byte[]> { Value = valData });
-                producer.Flush(TimeSpan.FromSeconds(10));
+                Assert.True(producer.Flush(TimeSpan.FromSeconds(10)) == 0);
             }
 
             var consumerConfig = new ConsumerConfig
             {
                 GroupId = Guid.NewGuid().ToString(),
                 BootstrapServers = bootstrapServers,
-                SessionTimeoutMs = 6000
+                SessionTimeoutMs = 6000,
+                EnablePartitionEof = true
             };
 
             // test key deserialization error behavior
-            using (var consumer = new Consumer<Null, string>(consumerConfig))
+            using (var consumer =
+                new ConsumerBuilder<Null, string>(consumerConfig)
+                    .SetPartitionsAssignedHandler((c, partitions) =>
+                    {
+                        Assert.Single(partitions);
+                        Assert.Equal(firstProduced.TopicPartition, partitions[0]);
+                        return partitions.Select(p => new TopicPartitionOffset(p, firstProduced.Offset));
+                    })
+                    .Build())
             {
-                int msgCnt = 0;
-                int errCnt = 0;
-                
-                bool done = false;
-                consumer.OnPartitionEOF += (_, tpo)
-                    => done = true;
-
-                consumer.OnPartitionsAssigned += (_, partitions) =>
-                {
-                    Assert.Single(partitions);
-                    Assert.Equal(firstProduced.TopicPartition, partitions[0]);
-                    consumer.Assign(partitions.Select(p => new TopicPartitionOffset(p, firstProduced.Offset)));
-                };
-
-                consumer.OnPartitionsRevoked += (_, partitions)
-                    => consumer.Unassign();
-
                 consumer.Subscribe(singlePartitionTopic);
 
-                while (!done)
+                int msgCnt = 0;
+                int errCnt = 0;
+                while (true)
                 {
+                    var s = consumer.Subscription;
                     try
                     {
-                        var record = consumer.Consume(TimeSpan.FromMilliseconds(100));
-                        if (record != null)
-                        {
-                            msgCnt += 1;
-                        }
+                        var record = consumer.Consume(TimeSpan.FromSeconds(10));
+                        if (record == null) { continue; }
+                        if (record.IsPartitionEOF) { break; }
+
+                        msgCnt += 1;
                     }
                     catch (ConsumeException e)
                     {
@@ -101,37 +95,30 @@ namespace Confluent.Kafka.IntegrationTests
                 consumer.Close();
             }
 
-            // test value deserialization error behavior
-            using (var consumer = new Consumer<string, Null>(consumerConfig))
+            // test value deserialization error behavior.
+            using (var consumer =
+                new ConsumerBuilder<string, Null>(consumerConfig)
+                    .SetPartitionsAssignedHandler((c, partitions) =>
+                    {
+                        Assert.Single(partitions);
+                        Assert.Equal(firstProduced.TopicPartition, partitions[0]);
+                        return partitions.Select(p => new TopicPartitionOffset(p, firstProduced.Offset));
+                    })
+                    .Build())
             {
-                int msgCnt = 0;
-                int errCnt = 0;
-
-                bool done = false;
-                consumer.OnPartitionEOF += (_, tpo)
-                    => done = true;
-
-                consumer.OnPartitionsAssigned += (_, partitions) =>
-                {
-                    Assert.Single(partitions);
-                    Assert.Equal(firstProduced.TopicPartition, partitions[0]);
-                    consumer.Assign(partitions.Select(p => new TopicPartitionOffset(p, firstProduced.Offset)));
-                };
-
-                consumer.OnPartitionsRevoked += (_, partitions)
-                    => consumer.Unassign();
-
                 consumer.Subscribe(singlePartitionTopic);
 
-                while (!done)
+                int msgCnt = 0;
+                int errCnt = 0;
+                while (true)
                 {
                     try
                     {
-                        var record = consumer.Consume(TimeSpan.FromMilliseconds(100));
-                        if (record != null)
-                        {
-                            msgCnt += 1;
-                        }
+                        var record = consumer.Consume(TimeSpan.FromSeconds(10));
+                        if (record == null) { continue; }
+                        if (record.IsPartitionEOF) { break; }
+
+                        msgCnt += 1;
                     }
                     catch (ConsumeException e)
                     {

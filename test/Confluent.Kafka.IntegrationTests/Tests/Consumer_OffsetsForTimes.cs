@@ -17,21 +17,20 @@
 #pragma warning disable xUnit1026
 
 using System;
-using System.Collections.Generic;
 using System.Linq;
-using System.Text;
 using System.Threading.Tasks;
 using Xunit;
 
+
 namespace Confluent.Kafka.IntegrationTests
 {
-    public static partial class Tests
+    public partial class Tests
     {
         /// <summary>
         ///     Basic OffsetsForTimes test on Consumer.
         /// </summary>
         [Theory, MemberData(nameof(KafkaParameters))]
-        public static void Consumer_OffsetsForTimes(string bootstrapServers, string singlePartitionTopic, string partitionedTopic)
+        public void Consumer_OffsetsForTimes(string bootstrapServers)
         {
             LogToFile("start Consumer_OffsetsForTimes");
 
@@ -48,17 +47,17 @@ namespace Confluent.Kafka.IntegrationTests
 
             var firstMessage = messages[0];
             var lastMessage = messages[N - 1];
-            using (var consumer = new Consumer<string, string>(consumerConfig))
+            using (var consumer = new ConsumerBuilder<byte[], byte[]>(consumerConfig).Build())
             {
                 var timeout = TimeSpan.FromSeconds(10);
 
                 // If empty request, expect empty result.
                 var result = consumer.OffsetsForTimes(new TopicPartitionTimestamp[0], timeout).ToList();
                 Assert.Empty(result);
-
+                
                 // Getting the offset for the first produced message timestamp
                 result = consumer.OffsetsForTimes(
-                        new[] { new TopicPartitionTimestamp(firstMessage.TopicPartition, firstMessage.Message.Timestamp) },
+                        new[] { new TopicPartitionTimestamp(firstMessage.TopicPartition, firstMessage.Timestamp) },
                         timeout)
                     .ToList();
 
@@ -67,7 +66,7 @@ namespace Confluent.Kafka.IntegrationTests
 
                 // Getting the offset for the last produced message timestamp
                 result = consumer.OffsetsForTimes(
-                        new[] { new TopicPartitionTimestamp(lastMessage.TopicPartition, lastMessage.Message.Timestamp) },
+                        new[] { new TopicPartitionTimestamp(lastMessage.TopicPartition, lastMessage.Timestamp) },
                         timeout)
                     .ToList();
 
@@ -98,20 +97,21 @@ namespace Confluent.Kafka.IntegrationTests
             LogToFile("end   Consumer_OffsetsForTimes");
         }
 
-        private static DeliveryReport<string, string>[] ProduceMessages(string bootstrapServers, string topic, int partition, int count)
+        private static DeliveryResult<byte[], byte[]>[] ProduceMessages(string bootstrapServers, string topic, int partition, int count)
         {
             var producerConfig = new ProducerConfig { BootstrapServers = bootstrapServers };
 
-            var messages = new DeliveryReport<string, string>[count];
-            using (var producer = new Producer<string, string>(producerConfig))
+            var messages = new DeliveryResult<byte[], byte[]>[count];
+            using (var producer = new ProducerBuilder<byte[], byte[]>(producerConfig).Build())
             {
                 for (var index = 0; index < count; index++)
                 {
                     var message = producer.ProduceAsync(
                         new TopicPartition(topic, partition),
-                        new Message<string, string> 
+                        new Message<byte[], byte[]>
                         { 
-                            Key = $"test key {index}", Value = $"test val {index}", 
+                            Key = Serializers.Utf8.Serialize($"test key {index}", SerializationContext.Empty),
+                            Value = Serializers.Utf8.Serialize($"test val {index}", SerializationContext.Empty),
                             Timestamp = Timestamp.Default, 
                             Headers = null
                         }

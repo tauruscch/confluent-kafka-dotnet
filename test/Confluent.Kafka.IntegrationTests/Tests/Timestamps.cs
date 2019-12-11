@@ -17,24 +17,26 @@
 #pragma warning disable xUnit1026
 
 using System;
-using System.Text;
 using System.Collections.Generic;
 using Xunit;
 
 
 namespace Confluent.Kafka.IntegrationTests
 {
-    public static partial class Tests
+    public partial class Tests
     {
         /// <summary>
         ///     Integration tests for Producing / consuming timestamps.
         /// </summary>
         [Theory, MemberData(nameof(KafkaParameters))]
-        public static void CustomTimestampTests(string bootstrapServers, string singlePartitionTopic, string partitionedTopic)
+        public void Timestamps(string bootstrapServers)
         {
-            LogToFile("start CustomTimestampTests");
+            LogToFile("start Timestamps");
 
-            var producerConfig = new ProducerConfig { BootstrapServers = bootstrapServers };
+            var producerConfig = new ProducerConfig
+            {
+                BootstrapServers = bootstrapServers
+            };
 
             var consumerConfig = new ConsumerConfig
             {
@@ -43,209 +45,225 @@ namespace Confluent.Kafka.IntegrationTests
                 SessionTimeoutMs = 6000
             };
 
-            var drs_1 = new List<DeliveryReportResult<Null, string>>();
-            List<DeliveryReport<Null, string>> drs = new List<DeliveryReport<Null, string>>();
-            using (var producer = new Producer<Null, string>(producerConfig))
+            var drs_produce = new List<DeliveryReport<Null, string>>();
+            var drs_task = new List<DeliveryResult<Null, string>>();
+            using (var producer = new ProducerBuilder<Null, string>(producerConfig).Build())
             {
-                drs.Add(producer.ProduceAsync(singlePartitionTopic, new Message<Null, string> { Value = "testvalue" }).Result);
+                // --- ProduceAsync, serializer case.
+
+                drs_task.Add(producer.ProduceAsync(
+                    singlePartitionTopic, 
+                    new Message<Null, string> { Value = "testvalue" }).Result);
                 
                 // TimestampType: CreateTime
-                drs.Add(producer.ProduceAsync(
+                drs_task.Add(producer.ProduceAsync(
                     new TopicPartition(singlePartitionTopic, 0),
                     new Message<Null, string> 
                     { 
                         Value = "test-value", 
                         Timestamp = new Timestamp(new DateTime(2008, 11, 12, 0, 0, 0, DateTimeKind.Utc))
-                    }
-                ).Result); 
+                    }).Result);
 
                 // TimestampType: CreateTime (default)
-                drs.Add(producer.ProduceAsync(
+                drs_task.Add(producer.ProduceAsync(
                     new TopicPartition(singlePartitionTopic, 0),
                     new Message<Null, string> { Value = "test-value" }).Result);
 
                 // TimestampType: LogAppendTime
-                Assert.Throws<ArgumentException>(() => producer.ProduceAsync(
-                    new TopicPartition(singlePartitionTopic, 0),
-                    new Message<Null, string> 
-                    { 
-                        Value = "test-value", 
-                        Timestamp = new Timestamp(DateTime.Now, TimestampType.LogAppendTime) 
-                    }
-                ).Result);
+                Assert.Throws<AggregateException>(() =>
+                    producer.ProduceAsync(
+                        new TopicPartition(singlePartitionTopic, 0),
+                        new Message<Null, string>
+                        {
+                            Value = "test-value", 
+                            Timestamp = new Timestamp(DateTime.Now, TimestampType.LogAppendTime) 
+                        }).Result);
 
                 // TimestampType: NotAvailable
-                Assert.Throws<ArgumentException>(() => producer.ProduceAsync(
-                    new TopicPartition(singlePartitionTopic, 0),
-                    new Message<Null, string> 
-                    { 
-                        Value = "test-value",
-                        Timestamp = new Timestamp(10, TimestampType.NotAvailable)
-                    }
-                ).Result);
+                Assert.Throws<AggregateException>(() =>
+                    producer.ProduceAsync(
+                        new TopicPartition(singlePartitionTopic, 0),
+                        new Message<Null, string> 
+                        { 
+                            Value = "test-value",
+                            Timestamp = new Timestamp(10, TimestampType.NotAvailable)
+                        }).Result);
 
-                Action<DeliveryReportResult<Null, string>> dh 
-                    = (DeliveryReportResult<Null, string> dr) => drs_1.Add(dr);
+                Action<DeliveryReport<Null, string>> dh 
+                    = (DeliveryReport<Null, string> dr) => drs_produce.Add(dr);
 
-                producer.BeginProduce(singlePartitionTopic, new Message<Null, string> { Value = "testvalue" }, dh);
+
+                // --- begin produce, serializer case.
+
+                producer.Produce(
+                    singlePartitionTopic,
+                    new Message<Null, string> { Value = "testvalue" }, dh);
 
                 // TimestampType: CreateTime
-                producer.BeginProduce(
+                producer.Produce(
                     new TopicPartition(singlePartitionTopic, 0),
                     new Message<Null, string> 
                     { 
                         Value = "test-value", 
                         Timestamp = new Timestamp(new DateTime(2008, 11, 12, 0, 0, 0, DateTimeKind.Utc))
-                    }, dh);
+                    },
+                    dh);
 
                 // TimestampType: CreateTime (default)
-                producer.BeginProduce(
+                producer.Produce(
                     new TopicPartition(singlePartitionTopic, 0),
                     new Message<Null, string> { Value = "test-value" },
-                    dh
-                );
+                    dh);
 
                 // TimestampType: LogAppendTime
-                Assert.Throws<ArgumentException>(() => producer.BeginProduce(
+                Assert.Throws<ArgumentException>(() => producer.Produce(
                     new TopicPartition(singlePartitionTopic, 0),
                     new Message<Null, string> 
                     { 
                         Value = "test-value", 
                         Timestamp = new Timestamp(DateTime.Now, TimestampType.LogAppendTime)
                     }, 
-                    dh
-                ));
+                    dh));
 
                 // TimestampType: NotAvailable
-                Assert.Throws<ArgumentException>(() => producer.BeginProduce(
+                Assert.Throws<ArgumentException>(() => producer.Produce(
                     new TopicPartition(singlePartitionTopic, 0),
                     new Message<Null, string> 
                     { 
                         Value = "test-value", 
                         Timestamp = new Timestamp(10, TimestampType.NotAvailable)
                     },
-                    dh
-                ));
+                    dh));
 
-                producer.Flush(TimeSpan.FromSeconds(10));
+                Assert.Equal(0, producer.Flush(TimeSpan.FromSeconds(10)));
             }
 
-            var drs_2 = new List<DeliveryReportResult<byte[], byte[]>>();
-            List<DeliveryReport<byte[], byte[]>> drs2 = new List<DeliveryReport<byte[], byte[]>>();
-            using (var producer = new Producer<byte[], byte[]>(producerConfig))
+            var drs2_produce = new List<DeliveryReport<byte[], byte[]>>();
+            var drs2_task = new List<DeliveryResult<byte[], byte[]>>();
+            using (var producer = new ProducerBuilder<byte[], byte[]>(producerConfig).Build())
             {
-                drs2.Add(producer.ProduceAsync(singlePartitionTopic, new Message<byte[], byte[]> { Timestamp = Timestamp.Default }).Result);
+                // --- ProduceAsync, byte[] case.
+
+                drs2_task.Add(producer.ProduceAsync(
+                    singlePartitionTopic,
+                    new Message<byte[], byte[]> { Timestamp = Timestamp.Default }).Result);
 
                 // TimestampType: CreateTime
-                drs2.Add(producer.ProduceAsync(singlePartitionTopic, new Message<byte[], byte[]> { Timestamp = new Timestamp(new DateTime(2008, 11, 12, 0, 0, 0, DateTimeKind.Utc)) }).Result);
+                drs2_task.Add(producer.ProduceAsync(
+                    singlePartitionTopic,
+                    new Message<byte[], byte[]> { Timestamp = new Timestamp(new DateTime(2008, 11, 12, 0, 0, 0, DateTimeKind.Utc)) }).Result);
+
                 // TimestampType: CreateTime (default)
-                drs2.Add(producer.ProduceAsync(singlePartitionTopic, new Message<byte[], byte[]> { Timestamp = Timestamp.Default }).Result);
+                drs2_task.Add(producer.ProduceAsync(
+                    singlePartitionTopic,
+                    new Message<byte[], byte[]> { Timestamp = Timestamp.Default }).Result);
+
                 // TimestampType: LogAppendTime
-                Assert.Throws<ArgumentException>(() => producer.ProduceAsync(singlePartitionTopic, new Message<byte[], byte[]> { Timestamp = new Timestamp(DateTime.Now, TimestampType.LogAppendTime) }).Result);
+                Assert.Throws<AggregateException>(() =>
+                    producer.ProduceAsync(
+                        singlePartitionTopic,
+                        new Message<byte[], byte[]> { Timestamp = new Timestamp(DateTime.Now, TimestampType.LogAppendTime) }).Result);
+
                 // TimestampType: NotAvailable
-                Assert.Throws<ArgumentException>(() => producer.ProduceAsync(singlePartitionTopic, new Message<byte[], byte[]> { Timestamp = new Timestamp(10, TimestampType.NotAvailable) }).Result);
+                Assert.Throws<AggregateException>(() =>
+                    producer.ProduceAsync(
+                        singlePartitionTopic,
+                        new Message<byte[], byte[]> { Timestamp = new Timestamp(10, TimestampType.NotAvailable) }).Result);
 
-                Action<DeliveryReportResult<byte[], byte[]>> dh = (DeliveryReportResult<byte[], byte[]> dr) => drs_2.Add(dr);
 
-                producer.BeginProduce(singlePartitionTopic, new Message<byte[], byte[]> { Timestamp = Timestamp.Default }, dh);
+                // --- begin produce, byte[] case.
+
+                Action<DeliveryReport<byte[], byte[]>> dh = (DeliveryReport<byte[], byte[]> dr) => drs2_produce.Add(dr);
+
+                producer.Produce(
+                    singlePartitionTopic, new Message<byte[], byte[]> { Timestamp = Timestamp.Default }, dh);
 
                 // TimestampType: CreateTime
-                producer.BeginProduce(singlePartitionTopic, new Message<byte[], byte[]> { Timestamp = new Timestamp(new DateTime(2008, 11, 12, 0, 0, 0, DateTimeKind.Utc)) }, dh);
-                // TimestampType: CreateTime (default)
-                producer.BeginProduce(singlePartitionTopic, new Message<byte[], byte[]> { Timestamp = Timestamp.Default }, dh);
-                // TimestampType: LogAppendTime
-                Assert.Throws<ArgumentException>(() => producer.BeginProduce(singlePartitionTopic, new Message<byte[], byte[]> { Timestamp = new Timestamp(DateTime.Now, TimestampType.LogAppendTime) }, dh));
-                // TimestampType: NotAvailable
-                Assert.Throws<ArgumentException>(() => producer.BeginProduce(singlePartitionTopic, new Message<byte[], byte[]> { Timestamp = new Timestamp(10, TimestampType.NotAvailable) }, dh));
+                producer.Produce(
+                    singlePartitionTopic,
+                    new Message<byte[], byte[]> { Timestamp = new Timestamp(new DateTime(2008, 11, 12, 0, 0, 0, DateTimeKind.Utc)) },
+                    dh);
 
-                producer.Flush(TimeSpan.FromSeconds(10));
+                // TimestampType: CreateTime (default)
+                producer.Produce(
+                    singlePartitionTopic,
+                    new Message<byte[], byte[]> { Timestamp = Timestamp.Default }, dh);
+
+                // TimestampType: LogAppendTime
+                Assert.Throws<ArgumentException>(() =>
+                    producer.Produce(
+                        singlePartitionTopic,
+                        new Message<byte[], byte[]> { Timestamp = new Timestamp(DateTime.Now, TimestampType.LogAppendTime) }, dh));
+
+                // TimestampType: NotAvailable
+                Assert.Throws<ArgumentException>(() =>
+                    producer.Produce(singlePartitionTopic,
+                    new Message<byte[], byte[]> { Timestamp = new Timestamp(10, TimestampType.NotAvailable) }, dh));
+
+                Assert.Equal(0, producer.Flush(TimeSpan.FromSeconds(10)));
             }
 
-            using (var consumer = new Consumer<byte[], byte[]>(consumerConfig))
+            using (var consumer = new ConsumerBuilder<Null, string>(consumerConfig).Build())
             {
                 // serializing async
 
-                assertCloseToNow(consumer, drs[0].TopicPartitionOffset);
+                assertCloseToNow(consumer, drs_task[0].TopicPartitionOffset);
 
-                consumer.Assign(new List<TopicPartitionOffset>() {drs[1].TopicPartitionOffset});
+                consumer.Assign(new List<TopicPartitionOffset>() {drs_task[1].TopicPartitionOffset});
                 var record = consumer.Consume(TimeSpan.FromSeconds(10));
                 Assert.NotNull(record.Message);
                 Assert.Equal(TimestampType.CreateTime, record.Message.Timestamp.Type);
                 Assert.Equal(record.Message.Timestamp, new Timestamp(new DateTime(2008, 11, 12, 0, 0, 0, DateTimeKind.Utc)));
 
-                assertCloseToNow(consumer, drs[2].TopicPartitionOffset);
+                assertCloseToNow(consumer, drs_task[2].TopicPartitionOffset);
 
                 // serializing deliveryhandler
 
-                assertCloseToNow(consumer, drs_1[0].TopicPartitionOffset);
+                assertCloseToNow(consumer, drs_produce[0].TopicPartitionOffset);
 
-                consumer.Assign(new List<TopicPartitionOffset>() {drs_1[1].TopicPartitionOffset});
+                consumer.Assign(new List<TopicPartitionOffset>() {drs_produce[1].TopicPartitionOffset});
                 record = consumer.Consume(TimeSpan.FromSeconds(10));
                 Assert.NotNull(record.Message);
                 Assert.Equal(TimestampType.CreateTime, record.Message.Timestamp.Type);
                 Assert.Equal(record.Message.Timestamp, new Timestamp(new DateTime(2008, 11, 12, 0, 0, 0, DateTimeKind.Utc)));
 
-                assertCloseToNow(consumer, drs_1[2].TopicPartitionOffset);
+                assertCloseToNow(consumer, drs_produce[2].TopicPartitionOffset);
+            }
+
+            using (var consumer = new ConsumerBuilder<byte[], byte[]>(consumerConfig).Build())
+            {
+                ConsumeResult<byte[], byte[]> record;
 
                 // non-serializing async
 
-                assertCloseToNow(consumer, drs2[0].TopicPartitionOffset);
+                assertCloseToNow_byte(consumer, drs2_task[0].TopicPartitionOffset);
 
-                consumer.Assign(new List<TopicPartitionOffset>() {drs2[1].TopicPartitionOffset});
+                consumer.Assign(new List<TopicPartitionOffset>() {drs2_task[1].TopicPartitionOffset});
                 record = consumer.Consume(TimeSpan.FromSeconds(10));
                 Assert.NotNull(record.Message);
                 Assert.Equal(TimestampType.CreateTime, record.Message.Timestamp.Type);
                 Assert.Equal(record.Message.Timestamp, new Timestamp(new DateTime(2008, 11, 12, 0, 0, 0, DateTimeKind.Utc)));
 
-                assertCloseToNow(consumer, drs2[2].TopicPartitionOffset);
+                assertCloseToNow_byte(consumer, drs2_task[2].TopicPartitionOffset);
 
                 // non-serializing deliveryhandler
 
-                assertCloseToNow(consumer, drs_2[0].TopicPartitionOffset);
+                assertCloseToNow_byte(consumer, drs2_produce[0].TopicPartitionOffset);
 
-                consumer.Assign(new List<TopicPartitionOffset>() {drs_2[1].TopicPartitionOffset});
+                consumer.Assign(new List<TopicPartitionOffset>() {drs2_produce[1].TopicPartitionOffset});
                 record = consumer.Consume(TimeSpan.FromSeconds(10));
                 Assert.NotNull(record.Message);
                 Assert.Equal(TimestampType.CreateTime, record.Message.Timestamp.Type);
                 Assert.Equal(record.Message.Timestamp, new Timestamp(new DateTime(2008, 11, 12, 0, 0, 0, DateTimeKind.Utc)));
 
-                assertCloseToNow(consumer, drs_2[2].TopicPartitionOffset);
-            }
-
-            using (var consumer = new Consumer<Null, string>(consumerConfig))
-            {
-                ConsumeResult<Null, string> cr;
-
-                // serializing async
-
-                assertCloseToNowTyped(consumer, drs[0].TopicPartitionOffset);
-
-                consumer.Assign(new List<TopicPartitionOffset>() {drs[1].TopicPartitionOffset});
-                cr = consumer.Consume(TimeSpan.FromSeconds(10));
-                Assert.NotNull(cr.Message);
-                Assert.Equal(TimestampType.CreateTime, cr.Message.Timestamp.Type);
-                Assert.Equal(cr.Message.Timestamp, new Timestamp(new DateTime(2008, 11, 12, 0, 0, 0, DateTimeKind.Utc)));
-                
-                assertCloseToNowTyped(consumer, drs[2].TopicPartitionOffset);
-
-                // serializing deliveryhandler
-
-                assertCloseToNowTyped(consumer, drs_1[0].TopicPartitionOffset);
-
-                consumer.Assign(new List<TopicPartitionOffset>() {drs_1[1].TopicPartitionOffset});
-                cr = consumer.Consume(TimeSpan.FromSeconds(10));
-                Assert.NotNull(cr.Message);
-                Assert.Equal(TimestampType.CreateTime, cr.Message.Timestamp.Type);
-                Assert.Equal(cr.Message.Timestamp, new Timestamp(new DateTime(2008, 11, 12, 0, 0, 0, DateTimeKind.Utc)));
-
-                assertCloseToNowTyped(consumer, drs_1[2].TopicPartitionOffset);
+                assertCloseToNow_byte(consumer, drs2_produce[2].TopicPartitionOffset);
             }
             
             Assert.Equal(0, Library.HandleCount);
-            LogToFile("end   CustomTimestampTests");
+            LogToFile("end   Timestamps");
         }
 
-        private static void assertCloseToNowTyped(Consumer<Null, string> consumer, TopicPartitionOffset tpo)
+        private static void assertCloseToNow(IConsumer<Null, string> consumer, TopicPartitionOffset tpo)
         {
             consumer.Assign(new List<TopicPartitionOffset>() {tpo});
             var cr = consumer.Consume(TimeSpan.FromSeconds(10));
@@ -254,7 +272,7 @@ namespace Confluent.Kafka.IntegrationTests
             Assert.True(Math.Abs((cr.Message.Timestamp.UtcDateTime - DateTime.UtcNow).TotalSeconds) < 120);
         }
 
-        private static void assertCloseToNow(Consumer<byte[], byte[]> consumer, TopicPartitionOffset tpo)
+        private static void assertCloseToNow_byte(IConsumer<byte[], byte[]> consumer, TopicPartitionOffset tpo)
         {
             consumer.Assign(new List<TopicPartitionOffset>() {tpo});
             var cr = consumer.Consume(TimeSpan.FromSeconds(10));

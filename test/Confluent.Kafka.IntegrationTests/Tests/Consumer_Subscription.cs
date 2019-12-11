@@ -17,26 +17,25 @@
 #pragma warning disable xUnit1026
 
 using System;
-using System.Linq;
-using System.Text;
 using System.Collections.Generic;
+using System.Linq;
 using Xunit;
 
 
 namespace Confluent.Kafka.IntegrationTests
 {
-    public static partial class Tests
+    public partial class Tests
     {
         /// <summary>
         ///     Basic DeserializingConsumer test (consume mode).
         /// </summary>
         [Theory, MemberData(nameof(KafkaParameters))]
-        public static void Consumer_Subscription(string bootstrapServers, string singlePartitionTopic, string partitionedTopic)
+        public void Consumer_Subscription(string bootstrapServers)
         {
             LogToFile("start Consumer_Subscription");
             
             int N = 2;
-            var firstProduced = Util.ProduceMessages(bootstrapServers, singlePartitionTopic, 1, N);
+            var firstProduced = Util.ProduceNullStringMessages(bootstrapServers, singlePartitionTopic, 1, N);
 
             var consumerConfig = new ConsumerConfig
             {
@@ -45,28 +44,26 @@ namespace Confluent.Kafka.IntegrationTests
                 SessionTimeoutMs = 6000
             };
 
-            using (var consumer = new Consumer<Null, string>(consumerConfig))
+            using (var consumer =
+                new ConsumerBuilder<byte[], byte[]>(consumerConfig)
+                    .SetPartitionsAssignedHandler((c, partitions) =>
+                    {
+                        Assert.Single(partitions);
+                        Assert.Equal(firstProduced.TopicPartition, partitions[0]);
+                        return partitions.Select(p => new TopicPartitionOffset(p, firstProduced.Offset));
+                    })
+                    .SetPartitionsRevokedHandler((c, partitions) =>
+                    {
+                        return new List<TopicPartitionOffset>();
+                    })
+                    .Build())
             {
                 // Test empty case.
                 Assert.Empty(consumer.Subscription);
 
-                consumer.OnPartitionsAssigned += (_, partitions) =>
-                {
-                    Assert.Single(partitions);
-                    Assert.Equal(firstProduced.TopicPartition, partitions[0]);
-                    consumer.Assign(partitions.Select(p => new TopicPartitionOffset(p, firstProduced.Offset)));
-
-                    // test non-empty case.
-                    Assert.Single(consumer.Subscription);
-                    Assert.Equal(singlePartitionTopic, consumer.Subscription[0]);
-                };
-
-                consumer.OnPartitionsRevoked += (_, partitions)
-                    => consumer.Unassign();
-
                 consumer.Subscribe(singlePartitionTopic);
 
-                var r = consumer.Consume(TimeSpan.FromSeconds(20));
+                var r = consumer.Consume(TimeSpan.FromSeconds(10));
 
                 consumer.Close();
             }

@@ -22,7 +22,7 @@ using System.Threading.Tasks;
 namespace Confluent.SchemaRegistry
 {
     /// <remarks>
-    ///     It may be useful to expose this publically, but this is not
+    ///     It may be useful to expose this publicly, but this is not
     ///     required by the Avro serializers, so we will keep this internal 
     ///     for now to minimize documentation / risk of API change etc.
     /// </remarks>
@@ -36,7 +36,7 @@ namespace Confluent.SchemaRegistry
         Task<string> GetSchemaAsync(int id);
         Task<Schema> GetSchemaAsync(string subject, int version);
         Task<List<string>> GetSubjectsAsync();
-        Task<List<string>> GetSubjectVersionsAsync(string subject);
+        Task<List<int>> GetSubjectVersionsAsync(string subject);
         Task<int> RegisterSchemaAsync(string subject, string schema);
         Task<Config> SetCompatibilityAsync(string subject, Compatibility compatibility);
         Task<Config> SetGlobalCompatibilityAsync(Compatibility compatibility);

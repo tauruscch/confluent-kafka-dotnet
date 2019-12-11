@@ -17,133 +17,153 @@
 #pragma warning disable xUnit1026
 
 using System;
-using System.Linq;
-using System.Text;
 using System.Collections.Generic;
+using System.Linq;
 using Xunit;
 
 
 namespace Confluent.Kafka.IntegrationTests
 {
-    public static partial class Tests
+    public partial class Tests
     {
         /// <summary>
-        ///     
+        ///     Tests of <see cref="Consumer.Assignment" />
         /// </summary>
         [Theory, MemberData(nameof(KafkaParameters))]
-        public static void Consumer_Assignment(string bootstrapServers, string singlePartitionTopic, string partitionedTopic)
+        public void Consumer_Assignment(string bootstrapServers)
         {
             LogToFile("start Consumer_Assignment");
 
             int N = 2;
-            var firstProduced = Util.ProduceMessages(bootstrapServers, singlePartitionTopic, 1, N);
+            var firstProduced = Util.ProduceNullStringMessages(bootstrapServers, singlePartitionTopic, 1, N);
 
             var consumerConfig = new ConsumerConfig
             {
                 GroupId = Guid.NewGuid().ToString(),
                 BootstrapServers = bootstrapServers,
-                SessionTimeoutMs = 6000
+                SessionTimeoutMs = 6000,
+                EnableAutoCommit = false
             };
 
             // Test in which both receive and revoke events are specified.
-            using (var consumer = new Consumer<Null, string>(consumerConfig))
+            using (var consumer =
+                new ConsumerBuilder<byte[], byte[]>(consumerConfig)
+                    .SetPartitionsAssignedHandler((c, partitions) =>
+                    {
+                        Assert.Single(partitions);
+                        Assert.Equal(firstProduced.TopicPartition, partitions[0]);
+                        Assert.Empty(c.Assignment);
+                        return partitions.Select(p => new TopicPartitionOffset(p, firstProduced.Offset));
+                    })
+                    .SetPartitionsRevokedHandler((c, partitions) =>
+                    {
+                        Assert.Single(c.Assignment);
+                    })
+                    .Build())
             {
                 Assert.Empty(consumer.Assignment);
-
-                consumer.OnPartitionsAssigned += (_, partitions) =>
-                {
-                    Assert.Single(partitions);
-                    Assert.Equal(firstProduced.TopicPartition, partitions[0]);
-                    consumer.Assign(partitions.Select(p => new TopicPartitionOffset(p, firstProduced.Offset)));
-
-                    // test non-empty case.
-                    Assert.Single(consumer.Assignment);
-                    Assert.Equal(singlePartitionTopic, consumer.Assignment[0].Topic);
-                    Assert.Equal(0, (int)consumer.Assignment[0].Partition);
-                };
-
-                consumer.OnPartitionsRevoked += (_, partitions) =>
-                {
-                    Assert.Single(consumer.Assignment);
-                    consumer.Unassign();
-                    Assert.Empty(consumer.Assignment);
-                };
-
                 consumer.Subscribe(singlePartitionTopic);
-
-                var r = consumer.Consume(TimeSpan.FromSeconds(20));
-
+                var r = consumer.Consume(TimeSpan.FromSeconds(10));
                 consumer.Close();
             }
 
-            // test in which only the revoked event handler is specified.
-            using (var consumer = new Consumer<Null, string>(consumerConfig))
+            // test in which only the revoked event handler is specified
+            using (var consumer =
+                new ConsumerBuilder<byte[], byte[]>(consumerConfig)
+                    .SetPartitionsRevokedHandler((c, partitions) =>
+                    {
+                        Assert.Single(c.Assignment);
+                    })
+                    .Build())
             {
                 consumer.Subscribe(singlePartitionTopic);
-
-                consumer.OnPartitionsRevoked += (_, partitions) =>
-                {
-                    Assert.Single(consumer.Assignment);
-                    consumer.Unassign();
-                    Assert.Empty(consumer.Assignment);
-                };
-
                 // assignment will happen as a side effect of this:
-                var r = consumer.Consume(TimeSpan.FromSeconds(5));
+                var r = consumer.Consume(TimeSpan.FromSeconds(10));
                 Assert.Single(consumer.Assignment);
-
                 consumer.Unsubscribe();
-
                 // revoke will happen as side effect of this:
-                r = consumer.Consume(TimeSpan.FromSeconds(5));
-
+                r = consumer.Consume(TimeSpan.FromSeconds(10));
                 Assert.Empty(consumer.Assignment);
-
                 consumer.Close();
             }
+
+            // test in which only the revoked event handler is specified
+            // and the returned set unmodified.
+            using (var consumer =
+                new ConsumerBuilder<byte[], byte[]>(consumerConfig)
+                    .SetPartitionsRevokedHandler((c, partitions) =>
+                    {
+                        Assert.Single(c.Assignment);
+                        return partitions;
+                    })
+                    .Build())
+            {
+                consumer.Subscribe(singlePartitionTopic);
+                // assignment will happen as a side effect of this:
+                var r = consumer.Consume(TimeSpan.FromSeconds(10));
+                Assert.Single(consumer.Assignment);
+                consumer.Unsubscribe();
+                // revoke will happen as side effect of this:
+                r = consumer.Consume(TimeSpan.FromSeconds(10));
+                Assert.Single(consumer.Assignment);
+                consumer.Close();
+            }
+
 
             // test in which only the receive event handler is specified.
-            using (var consumer = new Consumer<Null, string>(consumerConfig))
+            using (var consumer =
+                new ConsumerBuilder<byte[], byte[]>(consumerConfig)
+                    .SetPartitionsAssignedHandler((c, partitions) =>
+                    {
+                        Assert.Empty(c.Assignment);
+                    })
+                    .Build())
             {
                 consumer.Subscribe(singlePartitionTopic);
-
-                consumer.OnPartitionsAssigned += (_, partitions) =>
-                {
-                    Assert.Empty(consumer.Assignment);
-                    consumer.Assign(partitions);
-                    Assert.Single(consumer.Assignment);
-                };
-
                 // assignment will happen as a side effect of this:
-                var r = consumer.Consume(TimeSpan.FromSeconds(5));
+                var r = consumer.Consume(TimeSpan.FromSeconds(10));
                 Assert.Single(consumer.Assignment);
-
                 consumer.Unsubscribe();
-
                 // revoke will happen as side effect of this:
-                r = consumer.Consume(TimeSpan.FromSeconds(5));
-
+                r = consumer.Consume(TimeSpan.FromSeconds(10));
                 Assert.Empty(consumer.Assignment);
+                consumer.Close();
+            }
 
+            // test in which only the receive event handler is specified
+            // and assignment set is modified.
+            using (var consumer =
+                new ConsumerBuilder<byte[], byte[]>(consumerConfig)
+                    .SetPartitionsAssignedHandler((c, partitions) =>
+                    {
+                        Assert.Empty(c.Assignment);
+                        Assert.Single(partitions);
+                        return new List<TopicPartitionOffset>();
+                    })
+                    .Build())
+            {
+                consumer.Subscribe(singlePartitionTopic);
+                // assignment will happen as a side effect of this:
+                var r = consumer.Consume(TimeSpan.FromSeconds(10));
+                Assert.Empty(consumer.Assignment);
+                consumer.Unsubscribe();
+                // revoke will happen as side effect of this:
+                r = consumer.Consume(TimeSpan.FromSeconds(10));
+                Assert.Empty(consumer.Assignment);
                 consumer.Close();
             }
 
             // test in which neither the receive or revoke handler is specified.
-            using (var consumer = new Consumer<Null, string>(consumerConfig))
+            using (var consumer = new ConsumerBuilder<byte[], byte[]>(consumerConfig).Build())
             {
                 consumer.Subscribe(singlePartitionTopic);
-
                 // assignment will happen as a side effect of this:
-                var r = consumer.Consume(TimeSpan.FromSeconds(5));
+                var r = consumer.Consume(TimeSpan.FromSeconds(10));
                 Assert.Single(consumer.Assignment);
-
                 consumer.Unsubscribe();
-
                 // revoke will happen as side effect of this:
-                r = consumer.Consume(TimeSpan.FromSeconds(5));
-
+                r = consumer.Consume(TimeSpan.FromSeconds(10));
                 Assert.Empty(consumer.Assignment);
-
                 consumer.Close();
             }
 

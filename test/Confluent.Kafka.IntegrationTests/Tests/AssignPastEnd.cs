@@ -17,21 +17,20 @@
 #pragma warning disable xUnit1026
 
 using System;
-using System.Text;
 using System.Collections.Generic;
 using Xunit;
 
 
 namespace Confluent.Kafka.IntegrationTests
 {
-    public static partial class Tests
+    public partial class Tests
     {
         /// <summary>
-        ///     Test functionality of Consumer.Consume when assigned to offest
+        ///     Test functionality of Consumer.Consume when assigned to offset
         ///     higher than the offset of the last message on a partition.
         /// </summary>
         [Theory, MemberData(nameof(KafkaParameters))]
-        public static void AssignPastEnd(string bootstrapServers, string singlePartitionTopic, string partitionedTopic)
+        public void AssignPastEnd(string bootstrapServers)
         {
             LogToFile("start AssignPastEnd");
 
@@ -45,38 +44,36 @@ namespace Confluent.Kafka.IntegrationTests
 
             var testString = "hello world";
 
-            DeliveryReport<Null, string> dr;
-            using (var producer = new Producer<Null, string>(producerConfig))
+            DeliveryResult<Null, byte[]> dr;
+            using (var producer = new ProducerBuilder<Null, byte[]>(producerConfig).Build())
             {
-                dr = producer.ProduceAsync(singlePartitionTopic, new Message<Null, string> { Value = testString }).Result;
+                dr = producer.ProduceAsync(singlePartitionTopic, new Message<Null, byte[]> { Value = Serializers.Utf8.Serialize(testString, SerializationContext.Empty) }).Result;
                 Assert.True(dr.Offset >= 0);
                 producer.Flush(TimeSpan.FromSeconds(10));
             }
 
-            consumerConfig.AutoOffsetReset = AutoOffsetResetType.Latest;
-            using (var consumer = new Consumer<byte[], byte[]>(consumerConfig))
+            consumerConfig.AutoOffsetReset = AutoOffsetReset.Latest;
+            using (var consumer = new ConsumerBuilder<Null, byte[]>(consumerConfig).Build())
             {
-                ConsumeResult<byte[], byte[]> record;
-
-                // Consume API
+                ConsumeResult<Null, byte[]> record;
                 consumer.Assign(new List<TopicPartitionOffset>() { new TopicPartitionOffset(dr.TopicPartition, dr.Offset+1) });
-                record = consumer.Consume(TimeSpan.FromSeconds(10));
+                record = consumer.Consume(TimeSpan.FromSeconds(2));
                 Assert.Null(record);
                 consumer.Assign(new List<TopicPartitionOffset>() { new TopicPartitionOffset(dr.TopicPartition, dr.Offset+2) });
-                consumer.Consume(TimeSpan.FromSeconds(10));
+                consumer.Consume(TimeSpan.FromSeconds(2));
                 Assert.Null(record);
             }
 
-            consumerConfig.AutoOffsetReset = AutoOffsetResetType.Earliest;
-            using (var consumer = new Consumer<byte[], byte[]>(consumerConfig))
+            consumerConfig.AutoOffsetReset = AutoOffsetReset.Earliest;
+            using (var consumer = new ConsumerBuilder<byte[], byte[]>(consumerConfig).Build())
             {
                 ConsumeResult<byte[], byte[]> record;
                 consumer.Assign(new List<TopicPartitionOffset>() { new TopicPartitionOffset(dr.TopicPartition, dr.Offset+1) });
-                record = consumer.Consume(TimeSpan.FromSeconds(10));
+                record = consumer.Consume(TimeSpan.FromSeconds(2));
                 Assert.Null(record);
                 // Note: dr.Offset+2 is an invalid (c.f. dr.Offset+1 which is valid), so auto.offset.reset will come
-                // into play here to determine which offset to start from (earliest). Due to the the produce call above,
-                // there is guarenteed to be a message on the topic, so consumer.Consume will return true.
+                // into play here to determine which offset to start from (earliest). Due to the produce call above,
+                // there is guaranteed to be a message on the topic, so consumer.Consume will return true.
                 consumer.Assign(new List<TopicPartitionOffset>() { new TopicPartitionOffset(dr.TopicPartition, dr.Offset+2) });
                 record = consumer.Consume(TimeSpan.FromSeconds(10));
                 Assert.NotNull(record?.Message);

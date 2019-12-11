@@ -17,9 +17,6 @@
 #pragma warning disable xUnit1026
 
 using System;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 using System.Threading;
 using System.Collections.Generic;
 using Confluent.Kafka.Admin;
@@ -28,17 +25,17 @@ using Xunit;
 
 namespace Confluent.Kafka.IntegrationTests
 {
-    public static partial class Tests
+    public partial class Tests
     {
         /// <summary>
         ///     Test functionality of AdminClient.AlterConfigs.
         /// </summary>
         [Theory, MemberData(nameof(KafkaParameters))]
-        public static void AdminClient_AlterConfigs(string bootstrapServers, string singlePartitionTopic, string partitionedTopic)
+        public void AdminClient_AlterConfigs(string bootstrapServers)
         {
             LogToFile("start AdminClient_AlterConfigs");
 
-            using (var adminClient = new AdminClient(new AdminClientConfig { BootstrapServers = bootstrapServers }))
+            using (var adminClient = new AdminClientBuilder(new AdminClientConfig { BootstrapServers = bootstrapServers }).Build())
             {
                 // 1. create a new topic to play with.
                 string topicName = Guid.NewGuid().ToString();
@@ -51,7 +48,7 @@ namespace Confluent.Kafka.IntegrationTests
                 var toUpdate = new Dictionary<ConfigResource, List<ConfigEntry>>
                 {
                     {
-                        configResource, 
+                        configResource,
                         new List<ConfigEntry> {
                             new ConfigEntry { Name = "flush.ms", Value="10001" },
                             new ConfigEntry { Name = "ubute.invalid.config", Value="42" }

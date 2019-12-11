@@ -16,27 +16,27 @@
 
 #pragma warning disable xUnit1026
 
+using Newtonsoft.Json.Linq;
 using System;
 using System.Collections.Generic;
 using Xunit;
-using Newtonsoft.Json.Linq;
 
 
 namespace Confluent.Kafka.IntegrationTests
 {
-    public static partial class Tests
+    public partial class Tests
     {
         /// <summary>
         ///     Basic test that metadata request + serialization works.
         /// </summary>
         [Theory, MemberData(nameof(KafkaParameters))]
-        public static void Metadata(string bootstrapServers, string singlePartitionTopic, string partitionedTopic)
+        public void Metadata(string bootstrapServers)
         {
             LogToFile("start Metadata");
 
             var config = new AdminClientConfig { BootstrapServers = bootstrapServers };
 
-            using (var adminClient = new AdminClient(config))
+            using (var adminClient = new AdminClientBuilder(config).Build())
             {
                 var metadata = adminClient.GetMetadata(TimeSpan.FromSeconds(10));
                 Assert.NotNull(metadata.Brokers);

@@ -18,20 +18,19 @@
 
 using System;
 using System.Threading;
-using System.Collections.Generic;
 using Xunit;
 
 
 namespace Confluent.Kafka.IntegrationTests
 {
-    public static partial class Tests
+    public partial class Tests
     {
         /// <summary>
         ///     Tests that ObjectDisposedException is thrown rather than AccessViolationException
         ///     when Dispose has been called
         /// </summary>
         [Theory, MemberData(nameof(KafkaParameters))]
-        public static void Producer_ClosedHandle(string bootstrapServers, string singlePartitionTopic, string partitionedTopic)
+        public void Producer_ClosedHandle(string bootstrapServers)
         {
             LogToFile("start Producer_ClosedHandle");
 
@@ -40,7 +39,7 @@ namespace Confluent.Kafka.IntegrationTests
                 BootstrapServers = bootstrapServers,
                 EnableBackgroundPoll = false
             };
-            var producer = new Producer<byte[], byte[]>(producerConfig);
+            var producer = new ProducerBuilder<Null, Null>(producerConfig).Build();
             producer.Poll(TimeSpan.FromMilliseconds(10));
             producer.Dispose();
             Assert.Throws<ObjectDisposedException>(() => producer.Poll(TimeSpan.FromMilliseconds(10)));
@@ -54,15 +53,15 @@ namespace Confluent.Kafka.IntegrationTests
         ///     when Dispose has been called
         /// </summary>
         [Theory, MemberData(nameof(KafkaParameters))]
-        public static void Consumer_ClosedHandle(string bootstrapServers, string topic, string partitionedTopic)
+        public void Consumer_ClosedHandle(string bootstrapServers)
         {
             LogToFile("start Consumer_ClosedHandle");
 
             var consumerConfig = new ConsumerConfig { GroupId = Guid.NewGuid().ToString(), BootstrapServers = bootstrapServers };
-            var consumer = new Consumer<byte[], byte[]>(consumerConfig);
-            consumer.Consume(TimeSpan.FromMilliseconds(10));
+            var consumer = new ConsumerBuilder<Null, Null>(consumerConfig).Build();
+            consumer.Consume(TimeSpan.FromSeconds(10));
             consumer.Dispose();
-            Assert.Throws<ObjectDisposedException>(() => consumer.Consume(TimeSpan.FromMilliseconds(10)));
+            Assert.Throws<ObjectDisposedException>(() => consumer.Consume(TimeSpan.FromSeconds(10)));
             
             Assert.Equal(0, Library.HandleCount);
             LogToFile("end   Consumer_ClosedHandle");
@@ -73,12 +72,12 @@ namespace Confluent.Kafka.IntegrationTests
         ///     when Dispose has been called
         /// </summary>
         [Theory, MemberData(nameof(KafkaParameters))]
-        public static void TypedProducer_ClosedHandle(string bootstrapServers, string topic, string partitionedTopic)
+        public void TypedProducer_ClosedHandle(string bootstrapServers)
         {
             LogToFile("start TypedProducer_ClosedHandle");
 
             var producerConfig = new ProducerConfig { BootstrapServers = bootstrapServers };
-            var producer = new Producer<Null, Null>(producerConfig);
+            var producer = new ProducerBuilder<Null, Null>(producerConfig).Build();
             producer.Flush(TimeSpan.FromMilliseconds(10));
             producer.Dispose();
             Thread.Sleep(TimeSpan.FromMilliseconds(500)); // kafka handle destroy is done on the poll thread, is not immediate.
@@ -93,15 +92,15 @@ namespace Confluent.Kafka.IntegrationTests
         ///     when Dispose has been called
         /// </summary>
         [Theory, MemberData(nameof(KafkaParameters))]
-        public static void TypedConsumer_ClosedHandle(string bootstrapServers, string topic, string partitionedTopic)
+        public void TypedConsumer_ClosedHandle(string bootstrapServers)
         {
             LogToFile("start TypedConsumer_ClosedHandle");
 
             var consumerConfig = new ConsumerConfig { GroupId = Guid.NewGuid().ToString(), BootstrapServers = bootstrapServers };
-            var consumer = new Consumer<Null, Null>(consumerConfig);
-            consumer.Consume(TimeSpan.FromMilliseconds(10));
+            var consumer = new ConsumerBuilder<Null, Null>(consumerConfig).Build();
+            consumer.Consume(TimeSpan.FromSeconds(10));
             consumer.Dispose();
-            Assert.Throws<ObjectDisposedException>(() => consumer.Consume(TimeSpan.FromMilliseconds(10)));
+            Assert.Throws<ObjectDisposedException>(() => consumer.Consume(TimeSpan.FromSeconds(10)));
 
             Assert.Equal(0, Library.HandleCount);
             LogToFile("end   TypedConsumer_ClosedHandle");

@@ -30,19 +30,21 @@ namespace Confluent.Kafka
     /// <summary>
     ///     Implements an Apache Kafka admin client.
     /// </summary>
-    public class AdminClient : IAdminClient
+    internal class AdminClient : IAdminClient
     {
+        private int cancellationDelayMaxMs;
+
         private Task callbackTask;
         private CancellationTokenSource callbackCts;
 
         private IntPtr resultQueue = IntPtr.Zero;
 
-        private List<CreateTopicExceptionResult> extractTopicResults(IntPtr topicResultsPtr, int topicResultsCount)
+        private List<CreateTopicReport> extractTopicResults(IntPtr topicResultsPtr, int topicResultsCount)
         {
             IntPtr[] topicResultsPtrArr = new IntPtr[topicResultsCount];
             Marshal.Copy(topicResultsPtr, topicResultsPtrArr, 0, topicResultsCount);
 
-            return topicResultsPtrArr.Select(topicResultPtr => new CreateTopicExceptionResult 
+            return topicResultsPtrArr.Select(topicResultPtr => new CreateTopicReport 
                 {
                     Topic = PtrToStringUTF8(Librdkafka.topic_result_name(topicResultPtr)),
                     Error = new Error(
@@ -77,9 +79,9 @@ namespace Confluent.Kafka
             };
         }
 
-        private List<DescribeConfigsExceptionResult> extractResultConfigs(IntPtr configResourcesPtr, int configResourceCount)
+        private List<DescribeConfigsReport> extractResultConfigs(IntPtr configResourcesPtr, int configResourceCount)
         {
-            var result = new List<DescribeConfigsExceptionResult>();
+            var result = new List<DescribeConfigsReport>();
 
             IntPtr[] configResourcesPtrArr = new IntPtr[configResourceCount];
             Marshal.Copy(configResourcesPtr, configResourcesPtrArr, 0, configResourceCount);
@@ -100,7 +102,7 @@ namespace Confluent.Kafka
                     .Select(configEntryPtr => extractConfigEntry(configEntryPtr))
                     .ToDictionary(e => e.Name);
 
-                result.Add(new DescribeConfigsExceptionResult { 
+                result.Add(new DescribeConfigsReport { 
                     ConfigResource = new ConfigResource { Name = resourceName, Type = resourceConfigType },
                     Entries = configEntries,
                     Error = new Error(errorCode, errorReason)
@@ -110,7 +112,6 @@ namespace Confluent.Kafka
             return result;
         }
 
-        private const int POLL_TIMEOUT_MS = 100;
         private Task StartPollTask(CancellationToken ct)
             => Task.Factory.StartNew(() =>
                 {
@@ -122,7 +123,7 @@ namespace Confluent.Kafka
 
                             try
                             {
-                                var eventPtr = kafkaHandle.QueuePoll(resultQueue, POLL_TIMEOUT_MS);
+                                var eventPtr = kafkaHandle.QueuePoll(resultQueue, this.cancellationDelayMaxMs);
                                 if (eventPtr == IntPtr.Zero)
                                 {
                                     continue;
@@ -144,7 +145,7 @@ namespace Confluent.Kafka
                                 if (adminClientResult.GetType() != expectedType)
                                 {
                                     // Should never happen.
-                                    throw new InvalidOperationException($"Completion source type mismatch. Exected {expectedType.Name}, got {type}");
+                                    throw new InvalidOperationException($"Completion source type mismatch. Expected {expectedType.Name}, got {type}");
                                 }
 
                                 var errorCode = Librdkafka.event_error(eventPtr);
@@ -156,7 +157,9 @@ namespace Confluent.Kafka
                                         {
                                             if (errorCode != ErrorCode.NoError)
                                             {
-                                                ((TaskCompletionSource<List<CreateTopicExceptionResult>>)adminClientResult).TrySetException(new KafkaException(new Error(errorCode, errorStr)));
+                                                Task.Run(() => 
+                                                    ((TaskCompletionSource<List<CreateTopicReport>>)adminClientResult).TrySetException(
+                                                        new KafkaException(kafkaHandle.CreatePossiblyFatalError(errorCode, errorStr))));
                                                 return;
                                             }
 
@@ -165,11 +168,14 @@ namespace Confluent.Kafka
 
                                             if (result.Any(r => r.Error.IsError))
                                             {
-                                                ((TaskCompletionSource<List<CreateTopicExceptionResult>>)adminClientResult).TrySetException(new CreateTopicsException(result));
+                                                Task.Run(() => 
+                                                    ((TaskCompletionSource<List<CreateTopicReport>>)adminClientResult).TrySetException(
+                                                        new CreateTopicsException(result)));
                                             }
                                             else
                                             {
-                                                ((TaskCompletionSource<List<CreateTopicExceptionResult>>)adminClientResult).TrySetResult(result);
+                                                Task.Run(() => 
+                                                    ((TaskCompletionSource<List<CreateTopicReport>>)adminClientResult).TrySetResult(result));
                                             }
                                         }
                                         break;
@@ -178,21 +184,26 @@ namespace Confluent.Kafka
                                         {
                                             if (errorCode != ErrorCode.NoError)
                                             {
-                                                ((TaskCompletionSource<List<DeleteTopicExceptionResult>>)adminClientResult).TrySetException(new KafkaException(new Error(errorCode, errorStr)));
+                                                Task.Run(() => 
+                                                    ((TaskCompletionSource<List<DeleteTopicReport>>)adminClientResult).TrySetException(
+                                                        new KafkaException(kafkaHandle.CreatePossiblyFatalError(errorCode, errorStr))));
                                                 return;
                                             }
 
                                             var result = extractTopicResults(
                                                 Librdkafka.DeleteTopics_result_topics(eventPtr, out UIntPtr resultCountPtr), (int)resultCountPtr)
-                                                    .Select(r => new DeleteTopicExceptionResult { Topic = r.Topic, Error = r.Error }).ToList();
+                                                    .Select(r => new DeleteTopicReport { Topic = r.Topic, Error = r.Error }).ToList();
 
                                             if (result.Any(r => r.Error.IsError))
                                             {
-                                                ((TaskCompletionSource<List<DeleteTopicExceptionResult>>)adminClientResult).TrySetException(new DeleteTopicsException(result));
+                                                Task.Run(() => 
+                                                    ((TaskCompletionSource<List<DeleteTopicReport>>)adminClientResult).TrySetException(
+                                                        new DeleteTopicsException(result)));
                                             }
                                             else
                                             {
-                                                ((TaskCompletionSource<List<DeleteTopicExceptionResult>>)adminClientResult).TrySetResult(result);
+                                                Task.Run(() => 
+                                                    ((TaskCompletionSource<List<DeleteTopicReport>>)adminClientResult).TrySetResult(result));
                                             }
                                         }
                                         break;
@@ -201,21 +212,26 @@ namespace Confluent.Kafka
                                         {
                                             if (errorCode != ErrorCode.NoError)
                                             {
-                                                ((TaskCompletionSource<List<CreatePartitionsExceptionResult>>)adminClientResult).TrySetException(new KafkaException(new Error(errorCode, errorStr)));
+                                                Task.Run(() => 
+                                                    ((TaskCompletionSource<List<CreatePartitionsReport>>)adminClientResult).TrySetException(
+                                                        new KafkaException(kafkaHandle.CreatePossiblyFatalError(errorCode, errorStr))));
                                                 return;
                                             }
 
                                             var result = extractTopicResults(
                                                     Librdkafka.CreatePartitions_result_topics(eventPtr, out UIntPtr resultCountPtr), (int)resultCountPtr)
-                                                        .Select(r => new CreatePartitionsExceptionResult { Topic = r.Topic, Error = r.Error }).ToList();
+                                                        .Select(r => new CreatePartitionsReport { Topic = r.Topic, Error = r.Error }).ToList();
 
                                             if (result.Any(r => r.Error.IsError))
                                             {
-                                                ((TaskCompletionSource<List<CreatePartitionsExceptionResult>>)adminClientResult).TrySetException(new CreatePartitionsException(result));
+                                                Task.Run(() => 
+                                                    ((TaskCompletionSource<List<CreatePartitionsReport>>)adminClientResult).TrySetException(
+                                                        new CreatePartitionsException(result)));
                                             }
                                             else
                                             {
-                                                ((TaskCompletionSource<List<CreatePartitionsExceptionResult>>)adminClientResult).TrySetResult(result);
+                                                Task.Run(() => 
+                                                    ((TaskCompletionSource<List<CreatePartitionsReport>>)adminClientResult).TrySetResult(result));
                                             }
                                         }
                                         break;
@@ -224,7 +240,9 @@ namespace Confluent.Kafka
                                         {
                                             if (errorCode != ErrorCode.NoError)
                                             {
-                                                ((TaskCompletionSource<List<DescribeConfigsResult>>)adminClientResult).TrySetException(new KafkaException(new Error(errorCode, errorStr)));
+                                                Task.Run(() => 
+                                                    ((TaskCompletionSource<List<DescribeConfigsResult>>)adminClientResult).TrySetException(
+                                                        new KafkaException(kafkaHandle.CreatePossiblyFatalError(errorCode, errorStr))));
                                                 return;
                                             }
 
@@ -233,12 +251,15 @@ namespace Confluent.Kafka
 
                                             if (result.Any(r => r.Error.IsError))
                                             {
-                                                ((TaskCompletionSource<List<DescribeConfigsResult>>)adminClientResult).TrySetException(new DescribeConfigsException(result));
+                                                Task.Run(() => 
+                                                    ((TaskCompletionSource<List<DescribeConfigsResult>>)adminClientResult).TrySetException(
+                                                        new DescribeConfigsException(result)));
                                             }
                                             else
                                             {
                                                 var nr = result.Select(a => new DescribeConfigsResult { ConfigResource = a.ConfigResource, Entries = a.Entries }).ToList();
-                                                ((TaskCompletionSource<List<DescribeConfigsResult>>)adminClientResult).TrySetResult(nr);
+                                                Task.Run(() => 
+                                                    ((TaskCompletionSource<List<DescribeConfigsResult>>)adminClientResult).TrySetResult(nr));
                                             }
                                         }
                                         break;
@@ -247,21 +268,26 @@ namespace Confluent.Kafka
                                         {
                                             if (errorCode != ErrorCode.NoError)
                                             {
-                                                ((TaskCompletionSource<List<AlterConfigsExceptionResult>>)adminClientResult).TrySetException(new KafkaException(new Error(errorCode, errorStr)));
+                                                Task.Run(() => 
+                                                    ((TaskCompletionSource<List<AlterConfigsReport>>)adminClientResult).TrySetException(
+                                                        new KafkaException(kafkaHandle.CreatePossiblyFatalError(errorCode, errorStr))));
                                                 return;
                                             }
 
                                             var result = extractResultConfigs(
                                                 Librdkafka.AlterConfigs_result_resources(eventPtr, out UIntPtr cntp), (int)cntp)
-                                                    .Select(r => new AlterConfigsExceptionResult { ConfigResource = r.ConfigResource, Error = r.Error }).ToList();
+                                                    .Select(r => new AlterConfigsReport { ConfigResource = r.ConfigResource, Error = r.Error }).ToList();
 
                                             if (result.Any(r => r.Error.IsError))
                                             {
-                                                ((TaskCompletionSource<List<AlterConfigsExceptionResult>>)adminClientResult).TrySetException(new AlterConfigsException(result));
+                                                Task.Run(() => 
+                                                    ((TaskCompletionSource<List<AlterConfigsReport>>)adminClientResult).TrySetException(
+                                                        new AlterConfigsException(result)));
                                             }
                                             else
                                             {
-                                                ((TaskCompletionSource<List<AlterConfigsExceptionResult>>) adminClientResult).TrySetResult(result);
+                                                Task.Run(() => 
+                                                    ((TaskCompletionSource<List<AlterConfigsReport>>) adminClientResult).TrySetResult(result));
                                             }
                                         }
                                         break;
@@ -289,32 +315,17 @@ namespace Confluent.Kafka
 
         internal static Dictionary<Librdkafka.EventType, Type> adminClientResultTypes = new Dictionary<Librdkafka.EventType, Type>
         {
-            { Librdkafka.EventType.CreateTopics_Result, typeof(TaskCompletionSource<List<CreateTopicExceptionResult>>) },
-            { Librdkafka.EventType.DeleteTopics_Result, typeof(TaskCompletionSource<List<DeleteTopicExceptionResult>>) },
+            { Librdkafka.EventType.CreateTopics_Result, typeof(TaskCompletionSource<List<CreateTopicReport>>) },
+            { Librdkafka.EventType.DeleteTopics_Result, typeof(TaskCompletionSource<List<DeleteTopicReport>>) },
             { Librdkafka.EventType.DescribeConfigs_Result, typeof(TaskCompletionSource<List<DescribeConfigsResult>>) },
-            { Librdkafka.EventType.AlterConfigs_Result, typeof(TaskCompletionSource<List<AlterConfigsExceptionResult>>) },
-            { Librdkafka.EventType.CreatePartitions_Result, typeof(TaskCompletionSource<List<CreatePartitionsExceptionResult>>) }
+            { Librdkafka.EventType.AlterConfigs_Result, typeof(TaskCompletionSource<List<AlterConfigsReport>>) },
+            { Librdkafka.EventType.CreatePartitions_Result, typeof(TaskCompletionSource<List<CreatePartitionsReport>>) }
         };
 
+
         /// <summary>
-        ///     Get the configuration for the specified resources. The returned 
-        ///     configuration includes default values and the IsDefault property
-        ///     can be used to distinguish them from user supplied values. The 
-        ///     value of config entries where IsSensitive is true is always null 
-        ///     so that sensitive information is not disclosed. Config entries where
-        ///     IsReadOnly is true cannot be updated. This operation is supported 
-        ///     by brokers with version 0.11.0.0 or higher.
+        ///     Refer to <see cref="Confluent.Kafka.IAdminClient.DescribeConfigsAsync(IEnumerable{ConfigResource}, DescribeConfigsOptions)" />
         /// </summary>
-        /// <param name="resources">
-        ///     The resources (topic and broker resource types are currently 
-        ///     supported)
-        /// </param>
-        /// <param name="options">
-        ///     The options to use when describing configs.
-        /// </param>
-        /// <returns>
-        ///     Configs for the specified resources.
-        /// </returns>
         public Task<List<DescribeConfigsResult>> DescribeConfigsAsync(IEnumerable<ConfigResource> resources, DescribeConfigsOptions options = null)
         {
             // TODO: To support results that may complete at different times, we may also want to implement:
@@ -328,32 +339,16 @@ namespace Confluent.Kafka
             return completionSource.Task;
         }
 
+
         /// <summary>
-        ///     Update the configuration for the specified resources. Updates are not transactional
-        ///     so they may succeed for some resources while fail for others. The configs for a 
-        ///     particular resource are updated atomically. This operation is supported by brokers 
-        ///     with version 0.11.0.0 or higher. IMPORTANT NOTE: Unspecified configuration properties
-        ///     will be reverted to their default values. Furthermore, if you use DescribeConfigsAsync
-        ///     to obtain the current set of configuration values, modify them, then use 
-        ///     AlterConfigsAsync to set them, you will loose any non-default values that are marked 
-        ///     as sensitive because they are not provided by DescribeConfigsAsync.
+        ///     Refer to <see cref="Confluent.Kafka.IAdminClient.AlterConfigsAsync(Dictionary{ConfigResource, List{ConfigEntry}}, AlterConfigsOptions)" />
         /// </summary>
-        /// <param name="configs">
-        ///     The resources with their configs (topic is the only resource type with configs
-        ///     that can be updated currently).
-        /// </param>
-        /// <param name="options">
-        ///     The options to use when altering configs.
-        /// </param>
-        /// <returns>
-        ///     The results of the alter configs requests.
-        /// </returns>
         public Task AlterConfigsAsync(Dictionary<ConfigResource, List<ConfigEntry>> configs, AlterConfigsOptions options = null)
         {
             // TODO: To support results that may complete at different times, we may also want to implement:
             // List<Task<AlterConfigResult>> AlterConfigsConcurrent(Dictionary<ConfigResource, Config> configs, AlterConfigsOptions options = null)
 
-            var completionSource = new TaskCompletionSource<List<AlterConfigsExceptionResult>>();
+            var completionSource = new TaskCompletionSource<List<AlterConfigsReport>>();
             // Note: There is a level of indirection between the GCHandle and
             // physical memory address. GCHangle.ToIntPtr doesn't return the
             // physical address, it returns an id that refers to the object via
@@ -365,24 +360,16 @@ namespace Confluent.Kafka
             return completionSource.Task;
         }
 
+
         /// <summary>
-        ///     Create a set of new topics.
+        ///     Refer to <see cref="Confluent.Kafka.IAdminClient.CreateTopicsAsync(IEnumerable{TopicSpecification}, CreateTopicsOptions)" />
         /// </summary>
-        /// <param name="topics">
-        ///     A collection of specifications for the new topics to create.
-        /// </param>
-        /// <param name="options">
-        ///     The options to use when creating the topics.
-        /// </param>
-        /// <returns>
-        ///     The results of the create topic requests.
-        /// </returns>
         public Task CreateTopicsAsync(IEnumerable<TopicSpecification> topics, CreateTopicsOptions options = null)
         {
             // TODO: To support results that may complete at different times, we may also want to implement:
             // public List<Task<CreateTopicResult>> CreateTopicsConcurrent(IEnumerable<TopicSpecification> topics, CreateTopicsOptions options = null)
 
-            var completionSource = new TaskCompletionSource<List<CreateTopicExceptionResult>>();
+            var completionSource = new TaskCompletionSource<List<CreateTopicReport>>();
             var gch = GCHandle.Alloc(completionSource);
             Handle.LibrdkafkaHandle.CreateTopics(
                 topics, options, resultQueue,
@@ -391,27 +378,14 @@ namespace Confluent.Kafka
         }
 
         /// <summary>
-        ///     Delete a set of topics. This operation is not transactional so it may succeed for some topics while fail
-        ///     for others. It may take several seconds after the DeleteTopicsResult returns success for all the brokers to
-        ///     become aware that the topics are gone. During this time, topics may continue to be visible via admin 
-        ///     operations. If delete.topic.enable is false on the brokers, DeleteTopicsAsync will mark the topics for
-        ///     deletion, but not actually delete them. The Task will return successfully in this case.
+        ///     Refer to <see cref="Confluent.Kafka.IAdminClient.DeleteTopicsAsync(IEnumerable{string}, DeleteTopicsOptions)" />
         /// </summary>
-        /// <param name="topics">
-        ///     The topic names to delete.
-        /// </param>
-        /// <param name="options">
-        ///     The options to use when deleting topics.
-        /// </param>
-        /// <returns>
-        ///     The results of the delete topic requests.
-        /// </returns>
         public Task DeleteTopicsAsync(IEnumerable<string> topics, DeleteTopicsOptions options = null)
         {
             // TODO: To support results that may complete at different times, we may also want to implement:
             // List<Task<DeleteTopicResult>> DeleteTopicsConcurrent(IEnumerable<string> topics, DeleteTopicsOptions options = null)
 
-            var completionSource = new TaskCompletionSource<List<DeleteTopicExceptionResult>>();
+            var completionSource = new TaskCompletionSource<List<DeleteTopicReport>>();
             var gch = GCHandle.Alloc(completionSource);
             Handle.LibrdkafkaHandle.DeleteTopics(
                 topics, options, resultQueue,
@@ -420,25 +394,15 @@ namespace Confluent.Kafka
         }
 
         /// <summary>
-        ///     Increase the number of partitions for one or more topics as per
-        ///     the supplied PartitionsSpecifications.
+        ///     Refer to <see cref="Confluent.Kafka.IAdminClient.CreatePartitionsAsync(IEnumerable{PartitionsSpecification}, CreatePartitionsOptions)" />
         /// </summary>
-        /// <param name="partitionsSpecifications">
-        ///     A collection of PartitionsSpecifications.
-        /// </param>
-        /// <param name="options">
-        ///     The options to use when creating the partitions.
-        /// </param>
-        /// <returns>
-        ///     The results of the PartitionsSpecification requests.
-        /// </returns>
         public Task CreatePartitionsAsync(
             IEnumerable<PartitionsSpecification> partitionsSpecifications, CreatePartitionsOptions options = null)
         {
             // TODO: To support results that may complete at different times, we may also want to implement:
             // List<Task<CreatePartitionResult>> CreatePartitionsConcurrent(IEnumerable<PartitionsSpecification> partitionsSpecifications, CreatePartitionsOptions options = null)
 
-            var completionSource = new TaskCompletionSource<List<CreatePartitionsExceptionResult>>();
+            var completionSource = new TaskCompletionSource<List<CreatePartitionsReport>>();
             var gch = GCHandle.Alloc(completionSource);
             Handle.LibrdkafkaHandle.CreatePartitions(
                 partitionsSpecifications, options, resultQueue,
@@ -456,44 +420,41 @@ namespace Confluent.Kafka
         /// <summary>
         ///     Initialize a new AdminClient instance.
         /// </summary>
-        /// <param name="config">
-        ///     A collection of librdkafka configuration parameters 
-        ///     (refer to https://github.com/edenhill/librdkafka/blob/master/CONFIGURATION.md)
-        ///     and parameters specific to this client (refer to: 
-        ///     <see cref="Confluent.Kafka.ConfigPropertyNames" />). Only
-        ///     the bootstrap.servers property is required.
+        /// <param name="handle">
+        ///     An underlying librdkafka client handle that the AdminClient will use to 
+        ///     make broker requests. It is valid to provide either a Consumer, Producer
+        ///     or AdminClient handle.
         /// </param>
-        public AdminClient(IEnumerable<KeyValuePair<string, string>> config)
+        internal AdminClient(Handle handle)
+        {                            
+            this.ownedClient = null;
+            this.handle = handle;
+            Init();
+        }
+
+        internal AdminClient(AdminClientBuilder builder)
         {
-            if (
-                config.Where(prop => prop.Key.StartsWith("dotnet.producer.")).Count() > 0 ||
+            var config = Config.ExtractCancellationDelayMaxMs(builder.Config, out this.cancellationDelayMaxMs);
+
+            if (config.Where(prop => prop.Key.StartsWith("dotnet.producer.")).Count() > 0 ||
                 config.Where(prop => prop.Key.StartsWith("dotnet.consumer.")).Count() > 0)
             {
                 throw new ArgumentException("AdminClient configuration must not include producer or consumer specific configuration properties.");
             }
 
-            this.ownedClient = new Producer(new ProducerConfig(config));
+            // build a producer instance to use as the underlying client.
+            var producerBuilder = new ProducerBuilder<Null, Null>(config);
+            if (builder.LogHandler != null) { producerBuilder.SetLogHandler((_, logMessage) => builder.LogHandler(this, logMessage)); }
+            if (builder.ErrorHandler != null) { producerBuilder.SetErrorHandler((_, error) => builder.ErrorHandler(this, error)); }
+            if (builder.StatisticsHandler != null) { producerBuilder.SetStatisticsHandler((_, stats) => builder.StatisticsHandler(this, stats)); }
+            this.ownedClient = producerBuilder.Build();
+            
             this.handle = new Handle
             { 
                 Owner = this,
                 LibrdkafkaHandle = ownedClient.Handle.LibrdkafkaHandle
             };
 
-            Init();
-        }
-
-
-        /// <summary>
-        ///     Initialize a new AdminClient instance.
-        /// </summary>
-        /// <param name="handle">
-        ///     An underlying librdkafka client handle to use to make broker requests.
-        ///     It is valid to provide either a Consumer or Producer handle.
-        /// </param>
-        public AdminClient(Handle handle)
-        {
-            this.ownedClient = null;
-            this.handle = handle;
             Init();
         }
 
@@ -507,128 +468,32 @@ namespace Confluent.Kafka
 
 
         /// <summary>
-        ///     Get information pertaining to all groups in the Kafka cluster (blocking)
-        ///
-        ///     [API-SUBJECT-TO-CHANGE] - The API associated with this functionality 
-        ///     is subject to change.
+        ///     Refer to <see cref="Confluent.Kafka.IAdminClient.ListGroups(TimeSpan)" />
         /// </summary>
-        /// <param name="timeout">
-        ///     The maximum period of time the call may block.
-        /// </param>
         public List<GroupInfo> ListGroups(TimeSpan timeout)
             => kafkaHandle.ListGroups(timeout.TotalMillisecondsAsInt());
 
 
         /// <summary>
-        ///     Get information pertaining to a particular group in the
-        ///     Kafka cluster (blocking).
-        ///
-        ///     [API-SUBJECT-TO-CHANGE] - The API associated with this functionality is subject to change.
+        ///     Refer to <see cref="Confluent.Kafka.IAdminClient.ListGroup(string, TimeSpan)" />
         /// </summary>
-        /// <param name="group">
-        ///     The group of interest.
-        /// </param>
-        /// <param name="timeout">
-        ///     The maximum period of time the call may block.
-        /// </param>
-        /// <returns>
-        ///     Returns information pertaining to the specified group
-        ///     or null if this group does not exist.
-        /// </returns>
         public GroupInfo ListGroup(string group, TimeSpan timeout)
             => kafkaHandle.ListGroup(group, timeout.TotalMillisecondsAsInt());
 
 
         /// <summary>
-        ///     Get the last cached low (oldest available/beginning) and high (newest/end)
-        ///     offsets for a topic/partition.
-        /// </summary>
-        /// <remarks>
-        ///     This method is only available on instances constructed from a Consumer
-        ///     handle. The low offset is updated periodically (if statistics.interval.ms 
-        ///     is set) while the high offset is updated on each fetched message set from
-        ///     the broker. If there is no cached offset (either low or high, or both) then
-        ///     Offset.Invalid will be returned for the respective offset.
-        /// </remarks>
-        /// <param name="topicPartition">
-        ///     The topic/partition of interest.
-        /// </param>
-        /// <returns>
-        ///     The requested WatermarkOffsets (see that class for additional documentation).
-        /// </returns>
-        public WatermarkOffsets GetWatermarkOffsets(TopicPartition topicPartition)
-        {
-            if (!Handle.Owner.GetType().Name.Contains("Consumer"))
-            {
-                throw new InvalidCastException(
-                    "GetWatermarkOffsets is only available on AdminClient instances constructed from a Consumer handle.");
-            }
-            return kafkaHandle.GetWatermarkOffsets(topicPartition.Topic, topicPartition.Partition);
-        }
-
-
-        /// <summary>
-        ///     Query the Kafka cluster for low (oldest available/beginning) and high (newest/end)
-        ///     offsets for the specified topic/partition (blocking).
-        /// </summary>
-        /// <param name="topicPartition">
-        ///     The topic/partition of interest.
-        /// </param>
-        /// <param name="timeout">
-        ///     The maximum period of time the call may block.
-        /// </param>
-        /// <returns>
-        ///     The requested WatermarkOffsets (see that class for additional documentation).
-        /// </returns>
-        public WatermarkOffsets QueryWatermarkOffsets(TopicPartition topicPartition, TimeSpan timeout)
-            => kafkaHandle.QueryWatermarkOffsets(topicPartition.Topic, topicPartition.Partition, timeout.TotalMillisecondsAsInt());
-
-
-
-        /// <summary>
-        ///     Query the cluster for metadata.
-        ///
-        ///     [API-SUBJECT-TO-CHANGE] - The API associated with this functionality is subject to change.
+        ///     Refer to <see cref="Confluent.Kafka.IAdminClient.GetMetadata(TimeSpan)" />
         /// </summary>
         public Metadata GetMetadata(TimeSpan timeout)
             => kafkaHandle.GetMetadata(true, null, timeout.TotalMillisecondsAsInt());
 
 
         /// <summary>
-        ///     Query the cluster for metadata for a specific topic.
-        /// 
-        ///     [API-SUBJECT-TO-CHANGE] - The API associated with this functionality is subject to change.
+        ///     Refer to <see cref="Confluent.Kafka.IAdminClient.GetMetadata(string, TimeSpan)" />
         /// </summary>
         public Metadata GetMetadata(string topic, TimeSpan timeout)
             => kafkaHandle.GetMetadata(false, kafkaHandle.getKafkaTopicHandle(topic), timeout.TotalMillisecondsAsInt());
 
-
-        /// <summary>
-        ///     Refer to <see cref="Confluent.Kafka.IClient.OnLog" />.
-        /// </summary>
-        public event EventHandler<LogMessage> OnLog
-        {
-            add { handle.Owner.OnLog += value; }
-            remove { handle.Owner.OnLog -= value; }
-        }
-
-        /// <summary>
-        ///     Refer to <see cref="Confluent.Kafka.IClient.OnStatistics" />.
-        /// </summary>
-        public event EventHandler<string> OnStatistics
-        {
-            add { handle.Owner.OnStatistics += value; }
-            remove { handle.Owner.OnStatistics -= value; }
-        }
-
-        /// <summary>
-        ///     Refer to <see cref="Confluent.Kafka.IClient.OnError" />.
-        /// </summary>
-        public event EventHandler<ErrorEvent> OnError
-        {
-            add { handle.Owner.OnError += value; }
-            remove { handle.Owner.OnError -= value; }
-        }
 
         /// <summary>
         ///     Refer to <see cref="Confluent.Kafka.IClient.AddBrokers(string)" />

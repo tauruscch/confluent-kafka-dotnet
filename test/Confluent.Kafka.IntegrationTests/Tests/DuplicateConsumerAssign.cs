@@ -17,14 +17,13 @@
 #pragma warning disable xUnit1026
 
 using System;
-using System.Text;
 using System.Collections.Generic;
 using Xunit;
 
 
 namespace Confluent.Kafka.IntegrationTests
 {
-    public static partial class Tests
+    public partial class Tests
     {
         /// <summary>
         ///     This is an experiment to see what happens when two consumers in the
@@ -34,7 +33,7 @@ namespace Confluent.Kafka.IntegrationTests
         ///     You should never do this, but the brokers don't actually prevent it.
         /// </remarks>
         [Theory, MemberData(nameof(KafkaParameters))]
-        public static void DuplicateConsumerAssign(string bootstrapServers, string singlePartitionTopic, string partitionedTopic)
+        public void DuplicateConsumerAssign(string bootstrapServers)
         {
             LogToFile("start DuplicateConsumerAssign");
 
@@ -48,16 +47,16 @@ namespace Confluent.Kafka.IntegrationTests
 
             var testString = "hello world";
 
-            DeliveryReport<Null, string> dr;
-            using (var producer = new Producer<Null, string>(producerConfig))
+            DeliveryResult<byte[], byte[]> dr;
+            using (var producer = new ProducerBuilder<byte[], byte[]>(producerConfig).Build())
             {
-                dr = producer.ProduceAsync(singlePartitionTopic, new Message<Null, string> { Value = testString }).Result;
+                dr = producer.ProduceAsync(singlePartitionTopic, new Message<byte[], byte[]> { Value = Serializers.Utf8.Serialize(testString, SerializationContext.Empty) }).Result;
                 Assert.NotNull(dr);
                 producer.Flush(TimeSpan.FromSeconds(10));
             }
 
-            using (var consumer1 = new Consumer<byte[], byte[]>(consumerConfig))
-            using (var consumer2 = new Consumer<byte[], byte[]>(consumerConfig))
+            using (var consumer1 = new ConsumerBuilder<byte[], byte[]>(consumerConfig).Build())
+            using (var consumer2 = new ConsumerBuilder<byte[], byte[]>(consumerConfig).Build())
             {
                 consumer1.Assign(new List<TopicPartitionOffset>() { new TopicPartitionOffset(singlePartitionTopic, dr.Partition, 0) });
                 consumer2.Assign(new List<TopicPartitionOffset>() { new TopicPartitionOffset(singlePartitionTopic, dr.Partition, 0) });

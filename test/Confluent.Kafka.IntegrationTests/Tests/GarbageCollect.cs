@@ -17,15 +17,12 @@
 #pragma warning disable xUnit1026
 
 using System;
-using System.Text;
-using System.Threading;
-using System.Collections.Generic;
 using Xunit;
 
 
 namespace Confluent.Kafka.IntegrationTests
 {
-    public static partial class Tests
+    public partial class Tests
     {
         /// <summary>
         ///     Make a Producer and Consumer.
@@ -34,22 +31,22 @@ namespace Confluent.Kafka.IntegrationTests
         ///     Segfault?
         /// </summary>
         [Theory, MemberData(nameof(KafkaParameters))]
-        public static void GarbageCollect(string bootstrapServers, string singlePartitionTopic, string partitionedTopic)
+        public void GarbageCollect(string bootstrapServers)
         {
             LogToFile("start GarbageCollect");
 
             var producerConfig = new ProducerConfig { BootstrapServers = bootstrapServers };
             var consumerConfig = new ConsumerConfig { GroupId = Guid.NewGuid().ToString(), BootstrapServers = bootstrapServers };
 
-            using (var producer = new Producer<Null, string>(producerConfig))
+            using (var producer = new ProducerBuilder<byte[], byte[]>(producerConfig).Build())
             {
-                producer.ProduceAsync(singlePartitionTopic, new Message<Null, string> { Value = "test string" }).Wait();
+                producer.ProduceAsync(singlePartitionTopic, new Message<byte[], byte[]> { Value = Serializers.Utf8.Serialize("test string", SerializationContext.Empty) }).Wait();
             }
 
-            using (var consumer = new Consumer<Null, string>(consumerConfig))
+            using (var consumer = new ConsumerBuilder<byte[], byte[]>(consumerConfig).Build())
             {
                 consumer.Subscribe(singlePartitionTopic);
-                consumer.Consume(TimeSpan.FromMilliseconds(1000));
+                consumer.Consume(TimeSpan.FromSeconds(10));
                 consumer.Close();
             }
 

@@ -17,28 +17,26 @@
 #pragma warning disable xUnit1026
 
 using System;
-using System.Linq;
-using System.Threading;
-using System.Text;
 using System.Collections.Generic;
+using System.Threading;
 using Xunit;
 
 
 namespace Confluent.Kafka.IntegrationTests
 {
-    public static partial class Tests
+    public partial class Tests
     {
         /// <summary>
         ///     Test auto commit operates as expected when set to false (that issue #362 is resolved).
-        ///     note that 'default.topic.config' has been depreciated.
+        ///     note that 'default.topic.config' has been deprecated.
         /// </summary>
         [Theory, MemberData(nameof(KafkaParameters))]
-        public static void Consumer_AutoCommit(string bootstrapServers, string singlePartitionTopic, string partitionedTopic)
+        public void Consumer_AutoCommit(string bootstrapServers)
         {
             LogToFile("start Consumer_AutoCommit");
 
             int N = 2;
-            var firstProduced = Util.ProduceMessages(bootstrapServers, singlePartitionTopic, 100, N);
+            var firstProduced = Util.ProduceNullStringMessages(bootstrapServers, singlePartitionTopic, 100, N);
 
             var consumerConfig = new ConsumerConfig
             {
@@ -46,31 +44,29 @@ namespace Confluent.Kafka.IntegrationTests
                 BootstrapServers = bootstrapServers,
                 SessionTimeoutMs = 6000,
                 AutoCommitIntervalMs = 1000,
-                EnableAutoCommit = false
+                EnableAutoCommit = false,
+                EnablePartitionEof = true
             };
 
-            using (var consumer = new Consumer<Null, string>(consumerConfig))
+            using (var consumer =
+                new ConsumerBuilder<Null, string>(consumerConfig)
+                    .SetPartitionsAssignedHandler((c, partitions) =>
+                    {
+                        Assert.Single(partitions);
+                        return new List<TopicPartitionOffset> { new TopicPartitionOffset(singlePartitionTopic, firstProduced.Partition, firstProduced.Offset) };
+                    })
+                    .Build())
             {
-                bool done = false;
-                consumer.OnPartitionEOF += (_, tpo)
-                    => done = true;
-
-                consumer.OnPartitionsAssigned += (_, partitions) =>
-                {
-                    Assert.Single(partitions);
-                    consumer.Assign(new TopicPartitionOffset(singlePartitionTopic, firstProduced.Partition, firstProduced.Offset));
-                };
-
                 consumer.Subscribe(singlePartitionTopic);
 
                 int msgCnt = 0;
-                while (!done)
+                while (true)
                 {
-                    ConsumeResult<Null, string> record = consumer.Consume(TimeSpan.FromMilliseconds(100));
-                    if (record != null)
-                    {
-                        msgCnt += 1;
-                    }
+                    var record = consumer.Consume(TimeSpan.FromMilliseconds(100));
+                    if (record == null) { continue; }
+                    if (record.IsPartitionEOF) { break; }
+
+                    msgCnt += 1;
                 }
 
                 Assert.Equal(msgCnt, N);

@@ -18,49 +18,49 @@
 
 using System;
 using System.Linq;
-using System.Text;
-using System.Collections.Generic;
 using Xunit;
 
 
 namespace Confluent.Kafka.IntegrationTests
 {
-    public static partial class Tests
+    public partial class Tests
     {
         /// <summary>
-        ///     Test various combinations of unsubscribing / commiting before disposing the consumer.
+        ///     Test various combinations of unsubscribing / committing before disposing the consumer.
         /// </summary>
         [Theory, MemberData(nameof(KafkaParameters))]
-        public static void Consumer_Exiting(string bootstrapServers, string singlePartitionTopic, string partitionedTopic)
+        public void Consumer_Exiting(string bootstrapServers)
         {
-            LogToFile("start Consumer_Consume");
+            LogToFile("start Consumer_Exiting");
 
             int N = 2;
-            var firstProduced = Util.ProduceMessages(bootstrapServers, singlePartitionTopic, 100, N);
+            var firstProduced = Util.ProduceNullStringMessages(bootstrapServers, singlePartitionTopic, 100, N);
 
             var consumerConfig = new ConsumerConfig
             {
-                GroupId = Guid.NewGuid().ToString(),
                 BootstrapServers = bootstrapServers,
-                SessionTimeoutMs = 6000
+                SessionTimeoutMs = 6000,
+                Debug = "all"
             };
 
             for (int i=0; i<4; ++i)
             {
-                using (var consumer = new Consumer<Null, string>(consumerConfig))
+                consumerConfig.Set("group.id", Guid.NewGuid().ToString());
+
+                using (var consumer =
+                    new ConsumerBuilder<byte[], byte[]>(consumerConfig)
+                        .SetPartitionsAssignedHandler((c, partitions) =>
+                        {
+                            return partitions.Select(p => new TopicPartitionOffset(p, firstProduced.Offset));
+                        })
+                        .Build())
                 {
-                    consumer.OnPartitionsAssigned += (_, partitions)
-                        => consumer.Assign(partitions.Select(p => new TopicPartitionOffset(p, firstProduced.Offset)));
-
-                    consumer.OnPartitionsRevoked += (_, partitions)
-                        => consumer.Unassign();
-
                     consumer.Subscribe(singlePartitionTopic);
 
                     int tryCount = 10;
                     while (tryCount-- > 0)
                     {
-                        ConsumeResult<Null, string> record = consumer.Consume(TimeSpan.FromMilliseconds(1000));
+                        var record = consumer.Consume(TimeSpan.FromSeconds(10));
                         if (record != null)
                         {
                             break;
@@ -73,12 +73,15 @@ namespace Confluent.Kafka.IntegrationTests
                     switch (i)
                     {
                         case 0:
+                            LogToFile("  -- Unsubscribe");
                             consumer.Unsubscribe();
                             break;
                         case 1:
+                            LogToFile("  -- Commit");
                             consumer.Commit();
                             break;
                         case 3:
+                            LogToFile("  -- Close");
                             consumer.Close();
                             break;
                         case 4:
@@ -88,7 +91,7 @@ namespace Confluent.Kafka.IntegrationTests
             }
 
             Assert.Equal(0, Library.HandleCount);
-            LogToFile("end   Consumer_Consume");
+            LogToFile("end   Consumer_Exiting");
         }
 
     }

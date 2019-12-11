@@ -18,7 +18,6 @@ using System;
 using System.Threading.Tasks;
 using System.Threading;
 using System.Linq;
-using System.Collections.Generic;
 
 
 namespace Confluent.Kafka.Benchmark
@@ -44,7 +43,7 @@ namespace Confluent.Kafka.Benchmark
                 DeliveryReportFields = "none"
             };
 
-            DeliveryReport<byte[], byte[]> firstDeliveryReport = null;
+            DeliveryResult<Null, byte[]> firstDeliveryReport = null;
 
             Headers headers = null;
             if (nHeaders > 0)
@@ -56,7 +55,7 @@ namespace Confluent.Kafka.Benchmark
                 }
             }
 
-            using (var producer = new Producer<byte[], byte[]>(config))
+            using (var producer = new ProducerBuilder<Null, byte[]>(config).Build())
             {
                 for (var j=0; j<nTests; j += 1)
                 {
@@ -66,7 +65,7 @@ namespace Confluent.Kafka.Benchmark
                     var val = new byte[100].Select(a => ++cnt).ToArray();
 
                     // this avoids including connection setup, topic creation time, etc.. in result.
-                    firstDeliveryReport = producer.ProduceAsync(topic, new Message<byte[], byte[]> { Value = val, Headers = headers }).Result;
+                    firstDeliveryReport = producer.ProduceAsync(topic, new Message<Null, byte[]> { Value = val, Headers = headers }).Result;
 
                     var startTime = DateTime.Now.Ticks;
 
@@ -74,8 +73,15 @@ namespace Confluent.Kafka.Benchmark
                     {
                         var autoEvent = new AutoResetEvent(false);
                         var msgCount = nMessages;
-                        Action<DeliveryReportResult<byte[], byte[]>> deliveryHandler = (DeliveryReportResult<byte[], byte[]> deliveryReport) => 
+                        Action<DeliveryReport<Null, byte[]>> deliveryHandler = (DeliveryReport<Null, byte[]> deliveryReport) => 
                         {
+                            if (deliveryReport.Error.IsError)
+                            {
+                                // Not interested in benchmark results in the (unlikely) event there is an error.
+                                Console.WriteLine($"A error occured producing a message: {deliveryReport.Error.Reason}");
+                                Environment.Exit(1); // note: exceptions do not currently propagate to calling code from a deliveryHandler method.
+                            }
+
                             if (--msgCount == 0)
                             {
                                 autoEvent.Set();
@@ -84,19 +90,62 @@ namespace Confluent.Kafka.Benchmark
 
                         for (int i = 0; i < nMessages; i += 1)
                         {
-                            producer.BeginProduce(topic, new Message<byte[], byte[]> { Value = val, Headers = headers }, deliveryHandler);
+                            try
+                            {
+                                producer.Produce(topic, new Message<Null, byte[]> { Value = val, Headers = headers }, deliveryHandler);
+                            }
+                            catch (ProduceException<Null, byte[]> ex)
+                            {
+                                if (ex.Error.Code == ErrorCode.Local_QueueFull)
+                                {
+                                    producer.Poll(TimeSpan.FromSeconds(1));
+                                    i -= 1;
+                                }
+                                else
+                                {
+                                    throw;
+                                }
+                            }
                         }
 
-                        autoEvent.WaitOne();
+                        while (true)
+                        {
+                            if (autoEvent.WaitOne(TimeSpan.FromSeconds(1)))
+                            {
+                                break;
+                            }
+                            Console.WriteLine(msgCount);
+                        }
                     }
                     else
                     {
-                        var tasks = new Task[nMessages];
-                        for (int i = 0; i < nMessages; i += 1)
+                        try
                         {
-                            tasks[i] = producer.ProduceAsync(topic, new Message<byte[], byte[]> { Value = val, Headers = headers });
+                            var tasks = new Task[nMessages];
+                            for (int i = 0; i < nMessages; i += 1)
+                            {
+                                tasks[i] = producer.ProduceAsync(topic, new Message<Null, byte[]> { Value = val, Headers = headers });
+                                if (tasks[i].IsFaulted)
+                                {
+                                    if (((ProduceException<Null, byte[]>)tasks[i].Exception.InnerException).Error.Code == ErrorCode.Local_QueueFull)
+                                    {
+                                        producer.Poll(TimeSpan.FromSeconds(1));
+                                        i -= 1;
+                                    }
+                                    else
+                                    {
+                                        // unexpected, abort benchmark test.
+                                        throw tasks[i].Exception;
+                                    }
+                                }
+                            }
+
+                            Task.WaitAll(tasks);
                         }
-                        Task.WaitAll(tasks);
+                        catch (AggregateException ex)
+                        {
+                            Console.WriteLine(ex.Message);
+                        }
                     }
 
                     var duration = DateTime.Now.Ticks - startTime;
@@ -112,14 +161,14 @@ namespace Confluent.Kafka.Benchmark
         }
 
         /// <summary>
-        ///     Producer benchmark masquarading as an integration test.
+        ///     Producer benchmark masquerading as an integration test.
         ///     Uses Task based produce method.
         /// </summary>
         public static long TaskProduce(string bootstrapServers, string topic, int nMessages, int nHeaders, int nTests)
             => BenchmarkProducerImpl(bootstrapServers, topic, nMessages, nTests, nHeaders, false);
 
         /// <summary>
-        ///     Producer benchmark (with custom delivery handler) masquarading
+        ///     Producer benchmark (with custom delivery handler) masquerading
         ///     as an integration test. Uses Task based produce method.
         /// </summary>
         public static long DeliveryHandlerProduce(string bootstrapServers, string topic, int nMessages, int nHeaders, int nTests)
